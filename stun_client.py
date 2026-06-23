@@ -99,8 +99,3 @@ def stun_request():
     return ip_external_final,port_external_a,True
 
 
-
-if __name__ == "__main__":
-    stun_request()
-
-
