@@ -43,6 +43,11 @@ def main():
     recv_send = recvSend(client_socket,key)
     find_room(recv_send,ip,port)
 
+    data = recv_send.recv_by_size().decode()
+    data_lst = data.split(DELIMITER)
+
+    print("the other ip:",data_lst[2],"port ext: ",data_lst[1])
+
 
 
 

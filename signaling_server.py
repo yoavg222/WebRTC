@@ -4,7 +4,7 @@ import time
 from tcp_by_size import recvSend
 from DH_class import DH
 from constant import DH_START,IP_ADDRESS_ALLOWLISTING,DH_MSG
-
+from constant import IP_PORT_EXT_MSG,DELIMITER
 
 all_to_die = False
 room_users_dic = {}
@@ -18,11 +18,11 @@ def find_two_to_room(recv_send_crypt):
     data = recv_send_crypt.recv_by_size().decode()
     print("data in find_two_to_room: ",data)
 
-    data_lst = data.split("|")
+    data_lst = data.split(DELIMITER)
     print(data_lst)
 
     port_ip_ex = recv_send_crypt.recv_by_size().decode()
-    port_ip_ex_lst = port_ip_ex.split("|")
+    port_ip_ex_lst = port_ip_ex.split(DELIMITER)
     print(port_ip_ex_lst)
 
     ip_ex = port_ip_ex_lst[1]
@@ -47,6 +47,20 @@ def find_two_to_room(recv_send_crypt):
                 room_users_dic[data_lst[1]] = [recv_send_crypt]
 
     print(room_users_dic)
+
+    sock_to_send = recv_send_crypt
+
+    i = 0
+    for i in range(2):
+        sock_lst = room_users_dic[data_lst[1]]
+        if sock_lst[i] != recv_send_crypt:
+            sock_to_send = sock_lst[i]
+        i+=1
+
+
+    to_send = IP_PORT_EXT_MSG + DELIMITER + port_ex + DELIMITER + ip_ex
+    sock_to_send.send_with_size(to_send)
+
 
 
 def handle_client(sock,addr):

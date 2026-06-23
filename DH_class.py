@@ -47,13 +47,23 @@ class DH:
         a_public_pem = a_public.public_bytes(
             encoding= serialization.Encoding.PEM,format = serialization.PublicFormat.SubjectPublicKeyInfo)
 
-        recv_send_server.send_with_size(a_public_pem)
+        public_key_digital_signature, rsa_public_key = self.digital_signature(a_public_pem)
+
+        pem_public = rsa_public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        recv_send_server.send_with_size(pem_public)
+
+        to_send = public_key_digital_signature + a_public_pem
+        recv_send_server.send_with_size(to_send)
 
         self.shared_key_server = a_private.exchange(b_public_object)
         print("shared_key_server: ",self.shared_key_server)
 
         self.key_server = self.derived_key(True)
         return self.key_server
+
 
 
     def dhp_key_exchange_client(self,recv_send_client):
@@ -65,10 +75,19 @@ class DH:
 
         b_public_pem = b_public.public_bytes(
             encoding=serialization.Encoding.PEM, format=serialization.PublicFormat.SubjectPublicKeyInfo)
-
         recv_send_client.send_with_size(b_public_pem)
-        a_public = recv_send_client.recv_by_size()
-        a_public_object = serialization.load_pem_public_key(a_public)
+
+        a_rsa_public = recv_send_client.recv_by_size()
+        signature_msg_public_key = recv_send_client.recv_by_size()
+        signature_msg = signature_msg_public_key[:256]
+        a_public = signature_msg_public_key[256:]
+
+        authentication = self.check_digital_signature(a_rsa_public,a_public,signature_msg)
+
+        if not authentication:
+            return False,None
+        a_public_object =serialization.load_pem_public_key(a_public)
+
 
         self.shared_key_client = b_private.exchange(a_public_object)
         print("shared_key_client: ",self.shared_key_client)
@@ -125,3 +144,36 @@ class DH:
         signature = self.encrypt_with_rsa_digital_signature(rsa_private_key, public_key_dh)
 
         return signature, rsa_public_key
+
+
+    def check_digital_signature(self,server_rsa_public_key,server_dh_public_key,signature_msg):
+        public_key_rsa = serialization.load_pem_public_key(server_rsa_public_key)
+        try:
+            public_key_rsa.verify(
+                signature_msg,
+                server_dh_public_key,
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+
+            )
+            return True
+
+        except Exception as err:
+            print(err)
+            return False
+
+
+
+
+    def digital_signature_public_key(self,public_key_dh):
+        rsa_private_key = self.rsa_session.private_key
+        rsa_public_key = self.rsa_session.public_key
+        signature = self.encrypt_with_rsa_digital_signature(rsa_private_key, public_key_dh)
+
+        return signature,rsa_public_key
+
+
+
