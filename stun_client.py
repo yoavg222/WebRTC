@@ -84,18 +84,28 @@ def stun_request():
 
     if msg_type_b != b"\x01\x01":
         print("Error in msg_type_b")
-        return None,None,None
+        return None,None,None,client_socket
     print("Good msg_type_b")
 
     if transaction_id_check_b != transaction_id_b:
         print("Error in transaction_id_check")
-        return None,None,None
+        return None,None,None,client_socket
 
     if port_external_b != port_external_a:
         print("You have a symmetric NAT")
-        return ip_external_final, port_external_a, False
+        return ip_external_final, port_external_a, False,client_socket
 
     print("You have a full cone NAT ")
-    return ip_external_final,port_external_a,True
+    return ip_external_final,port_external_a,True,client_socket
 
+
+
+def keep_alive_udp_socket(udp_socket):
+    transaction_id_keep_alive = generate_transaction_id()
+    header = struct.pack("!HHI12s", STUN_METHOD["STUN_METHOD_BINDING"], STUN_MSG_LENGTH, STUN_MAGIC_COOKIE,
+                         transaction_id_keep_alive)
+    print("header:", header)
+    udp_socket.sendto(header, SERVER_A)
+    data, addr = udp_socket.recvfrom(1024)
+    print("data:", data)
 

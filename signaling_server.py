@@ -4,7 +4,7 @@ import time
 from tcp_by_size import recvSend
 from DH_class import DH
 from constant import DH_START,IP_ADDRESS_ALLOWLISTING,DH_MSG
-from constant import IP_PORT_EXT_MSG,DELIMITER
+from constant import IP_PORT_EXT_MSG,DELIMITER,SIGNALING_SERVER_PORT
 
 all_to_die = False
 room_users_dic = {}
@@ -90,7 +90,7 @@ def main():
     global all_to_die
 
     server_socket = socket.socket()
-    server_socket.bind((IP_ADDRESS_ALLOWLISTING,12345))
+    server_socket.bind((IP_ADDRESS_ALLOWLISTING,SIGNALING_SERVER_PORT))
     server_socket.listen(2)
 
     i = 0
@@ -114,7 +114,7 @@ def main():
     for t in threads:
         t.join()
     server_socket.close()
-    print('Bye ..')
+    print('Bye ...')
 
 
 
