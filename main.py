@@ -29,6 +29,8 @@ def hole_punching_func(udp_soket,other_ip,other_port):
     remote_peer_tuple = (other_ip,other_port)
     connect_to_peer(udp_soket,remote_peer_tuple)
 
+    udp_soket.sendto("yes".encode(),(other_ip,int(other_port)))
+
 
 
 
