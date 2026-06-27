@@ -18,10 +18,6 @@ def generate_transaction_id():
 
 def stun_request():
     global transaction_id
-    port_external_a = -1
-    port_external_b = -1
-    ip_external_final = -1
-
     client_socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 
     print("Sending binding request to stun server")
