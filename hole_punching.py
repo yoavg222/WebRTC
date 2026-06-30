@@ -1,8 +1,8 @@
 import threading
 import time
+from constant import SIGNALING_SERVER_IP_MAIN_SERVER
 
-
-def connect_to_peer(udp_socket,remote_peer_tuple):
+def connect_to_peer(udp_socket,remote_peer_tuple,signaling_server_ip):
 
     hole_punched = threading.Event()
     punch_hole_thread = threading.Thread(target=punch_hole,args = (udp_socket,remote_peer_tuple,hole_punched))
@@ -14,6 +14,10 @@ def connect_to_peer(udp_socket,remote_peer_tuple):
 
     print("msg in connect_to_peer: ",msg.decode())
     udp_socket.sendto("ACK".encode(),(ip,port))
+
+    if signaling_server_ip == SIGNALING_SERVER_IP_MAIN_SERVER:
+        msg, addr = udp_socket.recvfrom(1024)
+        print(msg)
 
     hole_punched.set()
 

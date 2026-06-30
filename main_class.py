@@ -51,20 +51,13 @@ class Main:
         self.stop_keep_alive = True
 
         remote_peer_tuple = (self.other_ip,self.other_port)
-        connect_to_peer(self.udp_socket,remote_peer_tuple)
-
-        # udp_soket.sendto("yes".encode(),(other_ip,int(other_port)))
-
-        # data,addr = self.udp_socket.recvfrom(2048)
-
-        # header_form,fixed_bit,packet_type,reserved,pn_length = header_parser(data)
-        # print("header_form,fixed_bit,packet_type,reserved,pn_length : ",header_form,fixed_bit,packet_type,reserved,pn_length)
+        connect_to_peer(self.udp_socket,remote_peer_tuple,self.signaling_server_ip)
 
 
 
     def dtls_handshake_server(self):
         data,addr = self.udp_socket.recvfrom(2048)
-        print(data.hex())
+        print(data)
 
 
     def dtls_handshake_client(self):
@@ -124,11 +117,11 @@ class Main:
         self.other_fingerprints = data_lst[4]
 
         self.other_ip = data_lst[2]
-        self.other_port = data_lst[1]
+        self.other_port = int(data_lst[1])
 
         self.hole_punching_func()
 
-        if self.signaling_server_ip:
+        if self.signaling_server_ip == SIGNALING_SERVER_IP_MAIN_SERVER:
             self.dtls_handshake_server()
         else:
             self.dtls_handshake_client()
