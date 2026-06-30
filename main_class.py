@@ -9,7 +9,7 @@ from constant import SIGNALING_SERVER_IP_MAIN_SERVER,DH_START,DH_MSG,ROOM_REQUES
 from DH_class import DH
 from hole_punching import connect_to_peer
 from aiortc import RTCCertificate
-from dtls import client_hello
+from dtls import client_hello,client_hello_parsing,server_hello
 
 
 class Main:
@@ -36,6 +36,11 @@ class Main:
         self.other_ip = None
         self.other_port = None
         self.random_dtls = random.randbytes(32)
+        self.other_random_dtls = None
+        self.client_public_key = None
+        self.cipher_suits = None
+        self.msg_aeq_number = {}
+        self.dtls_msg = []
 
     def keep_alive(self,udp_socket):
 
@@ -56,14 +61,48 @@ class Main:
 
 
     def dtls_handshake_server(self):
-        data,addr = self.udp_socket.recvfrom(2048)
-        print(data)
+        is_full = False
+        disconnect = False
+        while not is_full:
+            data,addr = self.udp_socket.recvfrom(2048)
+
+            is_full,self.other_random_dtls,self.client_public_key,self.cipher_suits = client_hello_parsing(data)
+            print("is_full: ", is_full," other_random_dtls: ",self.other_random_dtls," client_public_key: ",self.client_public_key)
+
+
+        server_hello_packet,server_ecdh = server_hello(0,self.random_dtls,self.cipher_suits)
+        self.udp_socket.settimeout(1.5)
+        self.udp_socket.sendto(server_hello_packet,(self.other_ip,self.other_port))
 
 
     def dtls_handshake_client(self):
-        client_hello_packet = client_hello(0,self.random_dtls)
-        self.udp_socket.sendto(client_hello_packet,(self.other_ip,self.other_port))
+        self.udp_socket.settimeout(1.5)
+        disconnect = False
+        client_hello_packet, ecdh_client = client_hello(0, self.random_dtls)
 
+        while len(self.dtls_msg) < 5:
+            self.udp_socket.sendto(client_hello_packet,(self.other_ip,self.other_port))
+
+            try:
+                data,addr = self.udp_socket.recvfrom(2048)
+
+                if data == b"":
+                    disconnect = True
+                    break
+
+                else:
+                    print(data)
+                    break
+
+
+            except TimeoutError:
+                continue
+
+        if disconnect:
+            self.udp_socket.close()
+            return
+
+        self.udp_socket.sendto(b"yes", (self.other_ip, self.other_port))
 
 
     def find_room(self):
@@ -84,8 +123,8 @@ class Main:
         return recv_send,client_socket
 
 
-
-
+    def save_other_random_dtls(self,random_dtls):
+        self.other_random_dtls = random_dtls
 
 
 
