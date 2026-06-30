@@ -1,13 +1,15 @@
 import socket
 import threading
 import time
+import random
 
 from stun_client import stun_request,keep_alive_udp_socket
 from tcp_by_size import recvSend
 from constant import SIGNALING_SERVER_IP_MAIN_SERVER,DH_START,DH_MSG,ROOM_REQUEST,DELIMITER,IP_PORT_EXT_MSG,SIGNALING_SERVER_PORT,SIGNALING_SERVER_IP_MAIN_CLIENT
 from DH_class import DH
 from hole_punching import connect_to_peer
-from quic import header_parser
+from aiortc import RTCCertificate
+from dtls import client_hello
 
 
 class Main:
@@ -15,7 +17,6 @@ class Main:
 
     def __init__(self,var):
         self.ip,self.port,self.is_full_cone_nat,self.udp_socket = stun_request()
-        self.recv_send,self.client_socket = self.create_client_socket_recv_send()
         self.recv_send_crypt = None
         self.stop_keep_alive = False
         self.signaling_server_ip = var
@@ -25,6 +26,16 @@ class Main:
         else:
             self.signaling_server_ip = SIGNALING_SERVER_IP_MAIN_CLIENT
 
+        self.recv_send, self.client_socket = self.create_client_socket_recv_send()
+        self.certificate = RTCCertificate.generateCertificate()
+        self.fingerprints = self.certificate.getFingerprints()
+
+        self.other_fingerprints = None
+        self.other_sha_algorithm = None
+
+        self.other_ip = None
+        self.other_port = None
+        self.random_dtls = random.randbytes(32)
 
     def keep_alive(self,udp_socket):
 
@@ -34,19 +45,31 @@ class Main:
 
 
 
-    def hole_punching_func(self,udp_soket,other_ip,other_port):
-        print("start hole punching with:",other_ip, " , ",other_port)
+    def hole_punching_func(self):
+        print("start hole punching with:",self.other_ip, " , ",self.other_port)
 
         self.stop_keep_alive = True
 
-        remote_peer_tuple = (other_ip,other_port)
-        connect_to_peer(udp_soket,remote_peer_tuple)
+        remote_peer_tuple = (self.other_ip,self.other_port)
+        connect_to_peer(self.udp_socket,remote_peer_tuple)
 
         # udp_soket.sendto("yes".encode(),(other_ip,int(other_port)))
-        data,addr = udp_soket.recvfrom(2048)
-        header_form,fixed_bit,packet_type,reserved,pn_length = header_parser(data)
-        print("header_form,fixed_bit,packet_type,reserved,pn_length : ",header_form,fixed_bit,packet_type,reserved,pn_length)
 
+        # data,addr = self.udp_socket.recvfrom(2048)
+
+        # header_form,fixed_bit,packet_type,reserved,pn_length = header_parser(data)
+        # print("header_form,fixed_bit,packet_type,reserved,pn_length : ",header_form,fixed_bit,packet_type,reserved,pn_length)
+
+
+
+    def dtls_handshake_server(self):
+        data,addr = self.udp_socket.recvfrom(2048)
+        print(data.hex())
+
+
+    def dtls_handshake_client(self):
+        client_hello_packet = client_hello(0,self.random_dtls)
+        self.udp_socket.sendto(client_hello_packet,(self.other_ip,self.other_port))
 
 
 
@@ -56,7 +79,7 @@ class Main:
         room_request = ROOM_REQUEST +room_client
         self.recv_send_crypt.send_with_size(room_request)
 
-        to_send_ip_port_ext = IP_PORT_EXT_MSG + DELIMITER + str(self.ip) + DELIMITER + str(self.port)
+        to_send_ip_port_ext = IP_PORT_EXT_MSG + DELIMITER + str(self.ip) + DELIMITER + str(self.port) + DELIMITER + self.fingerprints[0].algorithm + DELIMITER + self.fingerprints[0].value
         self.recv_send_crypt.send_with_size(to_send_ip_port_ext)
 
 
@@ -66,6 +89,10 @@ class Main:
         recv_send = recvSend(client_socket, None)
 
         return recv_send,client_socket
+
+
+
+
 
 
 
@@ -92,5 +119,18 @@ class Main:
         data = self.recv_send_crypt.recv_by_size().decode()
         data_lst = data.split(DELIMITER)
 
-        print("the other ip:",data_lst[2],"port ext: ",data_lst[1])
-        self.hole_punching_func(self.udp_socket,data_lst[2],data_lst[1])
+        print("the other ip:",data_lst[2],"port ext: ",data_lst[1],"the hash_algorithm: ",data_lst[3],"the fingerprints_value: ",data_lst[4])
+        self.other_sha_algorithm = data_lst[3]
+        self.other_fingerprints = data_lst[4]
+
+        self.other_ip = data_lst[2]
+        self.other_port = data_lst[1]
+
+        self.hole_punching_func()
+
+        if self.signaling_server_ip:
+            self.dtls_handshake_server()
+        else:
+            self.dtls_handshake_client()
+
+

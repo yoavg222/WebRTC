@@ -27,6 +27,8 @@ def find_two_to_room(recv_send_crypt):
 
     ip_ex = port_ip_ex_lst[1]
     port_ex = port_ip_ex_lst[2]
+    hash_algorithm = port_ip_ex_lst[3]
+    fingerprints_value = port_ip_ex_lst[4]
 
     while True:
 
@@ -58,7 +60,7 @@ def find_two_to_room(recv_send_crypt):
         i+=1
 
 
-    to_send = IP_PORT_EXT_MSG + DELIMITER + port_ex + DELIMITER + ip_ex
+    to_send = IP_PORT_EXT_MSG + DELIMITER + port_ex + DELIMITER + ip_ex + DELIMITER + hash_algorithm + DELIMITER + fingerprints_value
     sock_to_send.send_with_size(to_send)
 
 

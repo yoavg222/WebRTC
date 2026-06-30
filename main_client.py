@@ -1,5 +1,5 @@
 from main_class import Main
-
+import random
 
 
 def main():
