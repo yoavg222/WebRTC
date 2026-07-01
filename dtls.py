@@ -24,6 +24,8 @@ signature_algorithms = [
     0x0201
 ]
 
+signature_algorithms_client = []
+
 cipher_suits_dic = {
     "TLS_AES_128_GCM_SHA256" : 0x1301,
     "TLS_AES_256_GCM_SHA384" : 0x1302,
@@ -37,7 +39,7 @@ client_hello_type = b"\x01"
 supported_versions = b"\x00\x2b"
 dtls_13 = b"\xfe\xfc"
 key_share = b"\x00\x33"
-key_exchange_ecdh = b"\x00\x1d"
+key_exchange_ecdh = [b"\x00\x1d"]
 no_crime = b"\x01\x00"
 cipher_suite_data = b"\x00\x06"
 legacy_session_id = b"\x00"
@@ -45,11 +47,18 @@ legacy_cookie = b"\x00"
 server_hello_type = b"\x02"
 epoch = b"\x00\x00"
 
-handshake_msg = 0
 
 
 
-client_hello_packets = {}
+
+client_hello_packets_if_split = {}
+
+def support_ecdh_group(group):
+
+    if group in key_exchange_ecdh:
+        return True
+    return False
+
 
 def extension_key_share_func(public_key):
     return key_share + b"\x00\x26" + b"\x00\x24" + b"\x00\x1d" + b"\x00\x20" + public_key
@@ -85,6 +94,9 @@ def server_pick_cipher_suits(cipher_suits_client):
     return None
 
 
+def message_splitting_recv():
+    pass
+
 
 
 def message_splitting():
@@ -98,81 +110,147 @@ def server_hello_parsing():
 
 
 
+def header_parsing(packet):
+
+    dtls_record_type = packet[0]
+
+    dtls_protocol_version = struct.unpack(">H", packet[1:3])[0]
+    dtls_protocol_version = dtls_protocol_version.to_bytes(2,byteorder="big")
+
+    epoch_packet = struct.unpack(">H",packet[3:5])[0]
+    sequence_number = struct.unpack(">6s",packet[5:11])[0]
+    length = struct.unpack(">H",packet[11:13])[0]
+
+    return dtls_record_type,dtls_protocol_version,epoch_packet,sequence_number,length
+
+
+
+
+def tls_handshake_header_parsing(packet):
+
+    record_type = packet[0]
+    length_in_record = struct.unpack(">3s",packet[1:4])[0]
+
+    return record_type,length_in_record
+
+
+
+def client_hello_record_parsing(packet,length_in_record):
+    global signature_algorithms
+
+    data = packet[17:17+length_in_record]
+    print("data: ", data.hex())
+    print("packet: ",packet.hex())
+
+    data = packet[25:25 + length_in_record]
+    print("data2: ",data.hex())
+    client_random = data[2:34]
+
+    cipher_suits_length = data[36:38]
+    cipher_suits_length = int.from_bytes(cipher_suits_length, byteorder="big")
+
+    cipher_suits = data[38:38 + cipher_suits_length]
+    cipher_suits_length = int(cipher_suits_length / 2)
+    string_h = ">"
+
+    for i in range(cipher_suits_length):
+        string_h += "H"
+
+    cipher_suits_lst = struct.unpack(string_h, cipher_suits)
+    print(cipher_suits_lst)
+
+    cipher_suits_in = server_pick_cipher_suits(cipher_suits_lst)
+    print(cipher_suits_in)
+
+    print( data[38 + cipher_suits_length + cipher_suits_length + 2].to_bytes(2,byteorder="big"))
+    extension_length = data[38 + cipher_suits_length + cipher_suits_length + 2:38 + cipher_suits_length + cipher_suits_length + 4]
+    print(extension_length.hex())
+    extension_length = int.from_bytes(extension_length, byteorder="big")
+
+    extension = data[38 + cipher_suits_length + cipher_suits_length + 4:38 + cipher_suits_length + cipher_suits_length + 4 + extension_length]
+    print(extension.hex())
+
+    client_chosen_group = extension[6:8]
+    if not support_ecdh_group(client_chosen_group):
+        print("the server supports this group")
+        return None,None,False,None
+
+    client_public_key = extension[10:42]
+    print(client_public_key)
+
+    extension_supported_versions = extension[42:]
+    print(extension_supported_versions.hex())
+
+    value_for_dtls = extension_supported_versions[5:7]
+
+    if value_for_dtls != dtls_13:
+        return None,None,None,None
+
+
+    signature_algorithms_extension = extension_supported_versions[7:]
+    print(signature_algorithms_extension.hex())
+
+    signature_algorithms_extension_len = signature_algorithms_extension[4:6]
+    signature_algorithms_extension_len = int.from_bytes(signature_algorithms_extension_len,byteorder="big")
+    signature_algorithms_extension_client = signature_algorithms_extension[6:6+signature_algorithms_extension_len]
+    print(signature_algorithms_extension_client.hex())
+
+    string_h = ">"
+    for i in range (int(signature_algorithms_extension_len/2)):
+        string_h += "H"
+
+    signature_algorithms_extension_client = struct.unpack(string_h,signature_algorithms_extension_client)
+
+    for algorithm in signature_algorithms_extension_client:
+        signature_algorithms_client.append(algorithm.to_bytes(2,byteorder="big"))
+
+
+
+
+    return client_random,cipher_suits_in,client_chosen_group,client_public_key
+
+
+
+
 
 
 def client_hello_parsing(client_hello_packet):
 
-    is_full_packet = True
+    dtls_record_type, dtls_protocol_version, epoch_packet, sequence_number, length = header_parsing(client_hello_packet)
+    print("dtls_record_type: ",dtls_record_type," dtls_protocol_version: ",dtls_protocol_version," epoch_packet: ",epoch_packet," sequence_number: ",sequence_number," length: ",length)
 
-    dtls_record_type = client_hello_packet[0]
     if dtls_record_type != 22:
         print("this packet is not Handshake packet")
-        return False
-
-    dtls_protocol_version = struct.unpack(">H",client_hello_packet[1:3])[0]
-    dtls_protocol_version = dtls_protocol_version.to_bytes(2,byteorder="big")
+        return None,None,None,None
 
     if dtls_protocol_version != version:
         print("this packet is not in the good version")
-        return False
+        return None,None,None,None
 
-    handshake_record_type = client_hello_packet[15]
-    handshake_record_type= handshake_record_type.to_bytes(1,byteorder="big")
 
-    if handshake_record_type != client_hello_type:
-        print("this packet is not in the good handshake_record_type")
-        return False
 
-    handshake_record_length = client_hello_packet[16:19]
-    handshake_record_length = struct.unpack(">3s",handshake_record_length)[0]
-    handshake_record_length = int.from_bytes(handshake_record_length,byteorder="big")
-    print(handshake_record_length)
+    record = client_hello_packet[13:length]
+    record_type,length_in_record = tls_handshake_header_parsing(record)
+    length_in_record = int.from_bytes(length_in_record,byteorder="big")
 
-    fragment_offset = struct.unpack(">3s",client_hello_packet[21:24])[0]
-    fragment_offset = int.from_bytes(fragment_offset,byteorder="big")
+    print("record_type: ",record_type," length_in_record: ",length_in_record)
 
-    fragment_length = struct.unpack(">3s",client_hello_packet[24:27])[0]
-    fragment_length = int.from_bytes(fragment_length,byteorder="big")
 
-    sum_packet = fragment_offset + fragment_length
-    if sum_packet != handshake_record_length:
-        is_full_packet = False
+
+    if length_in_record > 1200:
+        message_splitting_recv()
     else:
-        print("this is full packet")
-
-    client_random = struct.unpack(">32s",client_hello_packet[29:61])[0]
-    print(client_random)
-
-    cipher_suite_client = struct.unpack(">HHHH",client_hello_packet[63:71])
-    print(cipher_suite_client)
-    cipher_suits_chosen = server_pick_cipher_suits(cipher_suite_client)
-    print(cipher_suits_chosen)
+        client_random,cipher_suits_in,client_chosen_group,public_key_client = client_hello_record_parsing(client_hello_packet,length_in_record)
+        return client_random,cipher_suits_in,client_chosen_group,public_key_client
 
 
-    extension_key_share = struct.unpack(">H",client_hello_packet[81:83])[0]
-    extension_key_share = extension_key_share.to_bytes(2,byteorder="big")
-
-    if extension_key_share != key_exchange_ecdh:
-        print("server not supports this version")
-        return False
-
-    client_public_key = struct.unpack(">32s",client_hello_packet[85:117])[0]
-    print(client_public_key)
-
-
-    return is_full_packet,client_random,client_public_key,cipher_suits_chosen
+    return True
 
 
 
-
-
-
-
-
-
-def server_hello(sequence_number,server_random,cipher_suite):
-    global client_hello_packets
+def server_hello(sequence_number,server_random,cipher_suite,handshake_msg):
     server_hello_packet = b""
+    msg_lst = []
 
     sequence_number_bytes = handshake_message_sequence_number_func(sequence_number)
     handshake_message_sequence_number = handshake_msg.to_bytes(2,byteorder="big")
@@ -210,29 +288,22 @@ def server_hello(sequence_number,server_random,cipher_suite):
     server_hello_packet = server_hello_type + server_hello_data + server_hello_packet
     server_hello_packet = dtls_record_header(sequence_number_bytes,len(server_hello_packet).to_bytes(2,byteorder="big")) + server_hello_packet
 
-    print(server_hello)
-    return server_hello_packet,server_ecdh
+    msg_lst.append(server_hello_packet)
+    print(server_hello_packet.hex())
+    return msg_lst,server_ecdh,sequence_number
 
 
 
 
 
-
-
-
-
-
-
-
-def client_hello(sequence_number,client_random):
-    global handshake_msg
-
+def client_hello(sequence_number,client_random,handshake_msg):
+    msg_lst = []
 
     sequence_number_bytes = handshake_message_sequence_number_func(sequence_number)
     handshake_message_sequence_number = handshake_msg.to_bytes(2,byteorder="big")
-    key_epoch = b"\x00\x00"
 
     client_hello_packet = b""
+    is_finish = False
 
     extension_supported_groups = struct.pack("!HHHH",0x000a,0x0004,0x0002,0x001d)
     client_hello_packet = extension_supported_groups + client_hello_packet
@@ -284,17 +355,19 @@ def client_hello(sequence_number,client_random):
         fragment_offset = b"\x00\x00\x00"
         client_hello_packet = handshake_message_sequence_number + fragment_offset + fragment_length + client_hello_packet
 
-    client_hello_packet = client_hello_type + fragment_length + client_hello_packet
 
-    length_of_following_data_in_this_record = len(client_hello_packet).to_bytes(4,byteorder="big")
+    client_hello_packet = client_hello_type + fragment_length + client_hello_packet
+    print(len(client_hello_packet))
+
+    length_of_following_data_in_this_record = len(client_hello_packet).to_bytes(2,byteorder="big")
 
     client_hello_packet = dtls_record_header(sequence_number_bytes,length_of_following_data_in_this_record) + client_hello_packet
-
+    msg_lst.append(client_hello_packet)
 
 
 
     print(client_hello_packet.hex())
-    return client_hello_packet,ecdh_client
+    return ecdh_client,msg_lst
 
 
 
@@ -303,4 +376,7 @@ def client_hello(sequence_number,client_random):
 if __name__ == "__main__":
     random_num = random.randbytes(32)
     print(random_num)
-    server_hello(client_hello(0,random_num),random.randbytes(32))
+    b,c = client_hello(0,random_num,0)
+    server_hello(0,random.randbytes(32),b"\x13\x01",0)
+    y,z = client_hello(0,random_num,0)
+    client_hello_parsing(z[0])

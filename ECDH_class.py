@@ -24,6 +24,7 @@ class ECDH:
         peer_pub_key_obj = x25519.X25519PublicKey.from_public_bytes(peer_public_key)
         self.shared_key = self.my_key.exchange(peer_pub_key_obj)
 
+
     def derived_key(self):
 
         return HKDF(
@@ -33,6 +34,7 @@ class ECDH:
             info = b"handshake data"
 
         ).derive(self.shared_key)
+
 
     def public_key(self):
 
