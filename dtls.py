@@ -3,6 +3,8 @@ import random
 import numpy as np
 
 from ECDH_class import ECDH
+from constant import SERVER_HELLO_PACKET
+
 
 
 signature_algorithms = [
@@ -60,13 +62,7 @@ epoch = b"\x00\x00"
 epoch_after_encrypt = b"\x00\x01"
 supported_groups_value = b"\x00\x0a"
 encrypted_extensions_type = b"\x08"
-
-
-
-
-
-client_hello_packets_if_split = {}
-
+header_info = b"\x2e"
 
 
 
@@ -82,7 +78,6 @@ def extension_key_share_func(public_key):
 
 
 def extension_key_share_func_server(public_key):
-    print(len(public_key))
     return key_share + b"\x00\x24" + b"\x00\x1d" + b"\x00\x20" + public_key
 
 
@@ -159,12 +154,7 @@ def tls_handshake_header_parsing(packet):
 def client_hello_record_parsing(packet,length_in_record):
     global signature_algorithms
 
-    data = packet[17:17+length_in_record]
-    print("data: ", data.hex())
-    print("packet: ",packet.hex())
-
     data = packet[25:25 + length_in_record]
-    print("data2: ",data.hex())
     client_random = data[2:34]
 
     cipher_suits_length = data[36:38]
@@ -178,18 +168,15 @@ def client_hello_record_parsing(packet,length_in_record):
         string_h += "H"
 
     cipher_suits_lst = struct.unpack(string_h, cipher_suits)
-    print(cipher_suits_lst)
+
 
     cipher_suits_in = server_pick_cipher_suits(cipher_suits_lst)
-    print(cipher_suits_in)
 
-    print( data[38 + cipher_suits_length + cipher_suits_length + 2].to_bytes(2,byteorder="big"))
     extension_length = data[38 + cipher_suits_length + cipher_suits_length + 2:38 + cipher_suits_length + cipher_suits_length + 4]
-    print(extension_length.hex())
     extension_length = int.from_bytes(extension_length, byteorder="big")
 
     extension = data[38 + cipher_suits_length + cipher_suits_length + 4:38 + cipher_suits_length + cipher_suits_length + 4 + extension_length]
-    print(extension.hex())
+
 
     client_chosen_group = extension[6:8]
     if not support_ecdh_group(client_chosen_group):
@@ -197,10 +184,7 @@ def client_hello_record_parsing(packet,length_in_record):
         return None,None,False,None
 
     client_public_key = extension[10:42]
-    print(client_public_key)
-
     extension_supported_versions = extension[42:]
-    print(extension_supported_versions.hex())
 
     value_for_dtls = extension_supported_versions[5:7]
 
@@ -209,12 +193,12 @@ def client_hello_record_parsing(packet,length_in_record):
 
 
     signature_algorithms_extension = extension_supported_versions[7:]
-    print(signature_algorithms_extension.hex())
+
 
     signature_algorithms_extension_len = signature_algorithms_extension[4:6]
     signature_algorithms_extension_len = int.from_bytes(signature_algorithms_extension_len,byteorder="big")
     signature_algorithms_extension_client = signature_algorithms_extension[6:6+signature_algorithms_extension_len]
-    print(signature_algorithms_extension_client.hex())
+
 
     string_h = ">"
     for i in range (int(signature_algorithms_extension_len/2)):
@@ -234,13 +218,10 @@ def client_hello_record_parsing(packet,length_in_record):
 
 
 def server_hello_record_parsing(packet,length_in_record):
-    print(packet.hex())
-    print(packet[25:25+length_in_record].hex())
 
     data = packet[25:25+length_in_record]
 
     server_version = data[0:2]
-    print(server_version)
 
     if server_version != version:
         return None,None,None,None
@@ -384,8 +365,7 @@ def server_hello(sequence_number,server_random,cipher_suite,handshake_msg):
     server_hello_packet = dtls_record_header(sequence_number_bytes,len(server_hello_packet).to_bytes(2,byteorder="big"),epoch) + server_hello_packet
 
     msg_lst.append(server_hello_packet)
-    print(server_hello_packet.hex())
-    return msg_lst,server_ecdh,sequence_number
+    return msg_lst,server_ecdh,sequence_number + 1
 
 
 
@@ -451,7 +431,6 @@ def client_hello(sequence_number,client_random,handshake_msg):
 
 
     client_hello_packet = client_hello_type + fragment_length + client_hello_packet
-    print(len(client_hello_packet))
 
     length_of_following_data_in_this_record = len(client_hello_packet).to_bytes(2,byteorder="big")
 
@@ -459,8 +438,6 @@ def client_hello(sequence_number,client_random,handshake_msg):
     msg_lst.append(client_hello_packet)
 
 
-
-    print(client_hello_packet.hex())
     return ecdh_client,msg_lst
 
 
@@ -472,18 +449,15 @@ def server_encrypted_extensions_seq_num(packet):
 
 
 
-def server_encrypted_extensions(seq_num):
+def server_encrypted_extensions(seq_num,handshake_msg):
 
     encrypted_extensions_packet = b""
-
-    record_type = handshake_type
-    # encrypted_extensions_packet = record_type + encrypted_extensions_packet
 
     for i in supported_groups:
         data = struct.pack("!H",i)
         encrypted_extensions_packet += data
 
-    print(encrypted_extensions_packet.hex())
+    handshake_message_sequence_number = handshake_msg.to_bytes(2, byteorder="big")
 
     bytes_in_curves_list = len(supported_groups) * 2
     bytes_in_curves_list = bytes_in_curves_list.to_bytes(2,byteorder="big")
@@ -492,28 +466,146 @@ def server_encrypted_extensions(seq_num):
     bytes_of_supported_group_extension = bytes_of_supported_group_extension.to_bytes(2,byteorder="big")
 
     encrypted_extensions_packet = supported_groups_value + bytes_of_supported_group_extension +bytes_in_curves_list + encrypted_extensions_packet
-    print(encrypted_extensions_packet.hex())
 
     extension_length = len(encrypted_extensions_packet)
+    print("extension_length: ",extension_length)
+
     extension_length = extension_length.to_bytes(2,byteorder="big")
 
     encrypted_extensions_packet = extension_length + encrypted_extensions_packet
 
     fragment_length = len(encrypted_extensions_packet)
-    print(fragment_length)
 
     if fragment_length > 1200:
         message_splitting()
         return True
+
+
     else:
         fragment_length = fragment_length.to_bytes(3,byteorder="big")
         fragment_offset = b"\x00\x00\x00"
-        handshake_message_sequence = seq_num.to_bytes(2,byteorder="big")
         bytes_of_handshake_message = fragment_length
 
-        encrypted_extensions_packet = encrypted_extensions_type + bytes_of_handshake_message + handshake_message_sequence + fragment_offset + fragment_length + encrypted_extensions_packet
-        print(encrypted_extensions_packet.hex())
-        return [encrypted_extensions_packet],seq_num
+        encrypted_extensions_packet = encrypted_extensions_type + bytes_of_handshake_message + handshake_message_sequence_number + fragment_offset + fragment_length + encrypted_extensions_packet
+        encrypted_extensions_packet += handshake_type
+        print("encrypted_extensions_packet: ",encrypted_extensions_packet.hex())
+
+        return [encrypted_extensions_packet],seq_num + 1
+
+
+
+
+
+
+def server_encrypted_extensions_parsing(packet):
+    pass
+
+
+
+
+
+
+
+def add_header_to_server_encrypted_extensions(packet,header_info,record_number):
+
+    record_length = len(packet)
+    record_length_bytes = record_length.to_bytes(2,byteorder="big")
+
+    # header_info_bytes = header_info.to_bytes(1,byteorder="big")
+    record_number_bytes = record_number.to_bytes(2,byteorder="big")
+
+    return header_info + record_number_bytes + record_length_bytes + packet
+
+
+
+
+def parsing_dtls_packet(dtls_packet,dtls_secure_decrypt):
+
+    packets_lst = []
+
+    current_len = 0
+    packet_len = len(dtls_packet)
+    current_packet = dtls_packet
+
+
+    while current_len < packet_len:
+        record_first_byte = current_packet[0]
+        record_first_byte_bytes = record_first_byte.to_bytes(1)
+
+        if record_first_byte_bytes == handshake_type:
+            print("this packet is a server hello packet")
+            record_header = current_packet[:13]
+            length = record_header[-2:]
+            server_random,cipher_suits_in,server_chosen_group,public_key_server = (current_packet[:length])
+
+            if server_random is None or cipher_suits_in is None or server_chosen_group is None or public_key_server is None:
+                print("something gone wrong at server_hello packet in parsing_dtls_packet")
+
+            else:
+                current_lst = [SERVER_HELLO_PACKET,server_random,cipher_suits_in,server_chosen_group,public_key_server,current_packet[13:13 + length]]
+                packets_lst.append(current_lst)
+
+            current_len += length
+            current_packet = current_packet[13+length:]
+
+
+        elif record_first_byte == header_info:
+            length = current_packet[3:5]
+            length = int.from_bytes(length,byteorder="big")
+
+            packet_to_decrypt = current_packet[length + 5:]
+            plain_text = dtls_secure_decrypt.decrypt_and_mask(packet_to_decrypt)
+
+
+
+
+
+
+
+
+
+def unit_records(lst_record_1,lst_record_2):
+    print(lst_record_1[0].hex())
+    print(lst_record_2[0].hex())
+
+    final_packet = b""
+
+
+    if len(lst_record_1) > 1:
+        print("this packet underwent fragmentation meaning its length exceeds the permitted limit.")
+        return False,None
+
+
+    else:
+        final_packet += lst_record_1[0]
+
+
+    if len(lst_record_2) > 1:
+        print("this packet underwent fragmentation meaning its length exceeds the permitted limit.")
+        return False,None
+
+
+    else:
+        final_packet += lst_record_2[0]
+
+        if len(final_packet) > 1300:
+            print("the unified package is too large.")
+            return False,None
+
+        else:
+            print(final_packet.hex())
+            return True,final_packet
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -527,4 +619,6 @@ if __name__ == "__main__":
     #
     # g,h,s = server_hello(0,random.randbytes(32),b"\x13\x01",0)
     # server_hello_parsing(g[0])
-    server_encrypted_extensions(1)
+    x = [b'\x16\xfe\xfd\x00\x00\x00\x00\x00\x00\x00\x00\x00b\x02\x00\x00V\x00\x00\x00\x00\x00\x00\x00V\xfe\xfd\xbdG\xce\xcf\xcc\xbeIGBGE~\x8e:=Vc\x93\xd9\xd1\x931\xc5\xb3C\xc2C\xc1h\xff\xa8h\x00\x13\x01\x00\x00.\x003\x00$\x00\x1d\x00 ,\xd9\x9f\xbd&\xa5R\x96Q\x97\xfe\x9a\x98?\xaf\x07\xe3\xba\xa9\x08\xa0Q\xdd\x82\xeb\xaf\xd5\xde\xc5\xe1\x95V\x00+\x00\x02\xfe\xfc']
+    y = [b'.]\xad\x00/D\xafG\x12\n\x9f\xf7\xe7\xa1\xda\xc8 \x0b3F\x82uk\x13\xe7\xd3UN\x93\xc1\xd0\xaacKi\xea\x06ze-\xf2$\x81M\xa7\xd2\x0f\x9c\xe0\xf0\x0f\xce']
+    unit_records(x,y)
