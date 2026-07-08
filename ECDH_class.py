@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import x25519
 
-from constant import group_x25519,TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384
+from constant import group_x25519,TLS_AES_128_GCM_SHA256
 
 
 

@@ -1,10 +1,6 @@
 import struct
-import random
-import numpy as np
-
 from ECDH_class import ECDH
-from constant import SERVER_HELLO_PACKET
-
+from cryptography.hazmat.primitives import serialization
 
 
 signature_algorithms = [
@@ -63,6 +59,10 @@ epoch_after_encrypt = b"\x00\x01"
 supported_groups_value = b"\x00\x0a"
 encrypted_extensions_type = b"\x08"
 header_info = b"\x2e"
+handshake_message_sequence_number_certificate = b"\x00\x02"
+handshake_message_type_certificate = b"\x0b"
+
+server_hello_coming = False
 
 
 
@@ -358,8 +358,7 @@ def server_hello(sequence_number,server_random,cipher_suite,handshake_msg):
         fragment_offset = b"\x00\x00\x00"
         server_hello_packet = handshake_message_sequence_number + fragment_offset + fragment_length + server_hello_packet
 
-    # server_hello_data = len(server_hello_packet)
-    # server_hello_data = server_hello_data.to_bytes(3,byteorder="big")
+
 
     server_hello_packet = server_hello_type + fragment_length + server_hello_packet
     server_hello_packet = dtls_record_header(sequence_number_bytes,len(server_hello_packet).to_bytes(2,byteorder="big"),epoch) + server_hello_packet
@@ -445,6 +444,7 @@ def client_hello(sequence_number,client_random,handshake_msg):
 
 
 def server_encrypted_extensions_seq_num(packet):
+    print("packet in server_encrypted_extensions_seq_num: ",packet.hex())
     return int.from_bytes(packet[1:3],byteorder="big")
 
 
@@ -490,23 +490,57 @@ def server_encrypted_extensions(seq_num,handshake_msg):
         encrypted_extensions_packet += handshake_type
         print("encrypted_extensions_packet: ",encrypted_extensions_packet.hex())
 
-        return [encrypted_extensions_packet],seq_num + 1
-
+        return [encrypted_extensions_packet],seq_num + 1,seq_num + 1
 
 
 
 
 
 def server_encrypted_extensions_parsing(packet):
-    pass
+
+    if packet[-1:] != handshake_type:
+        print("something get wrong at server_encrypted_extensions_parsing")
+        return None
+
+
+    length_data = packet[1:4]
+    length_data_int = int.from_bytes(length_data,byteorder="big")
+
+    handshake_header = packet[4:12]
+    fragment_length = packet[5:8]
+    fragment_length_int = int.from_bytes(fragment_length,byteorder="big")
+
+    data = packet[12:12+fragment_length_int]
+
+    extensions_length = data[:2]
+    extensions_length_int = int.from_bytes(extensions_length,byteorder="big")
+
+    supported_groups_extension = data[2:2+extensions_length_int]
+    print("supported_groups_extension: ",supported_groups_extension.hex())
+
+    length_curve_length = supported_groups_extension[4:6]
+    length_curve_length_int = int.from_bytes(length_curve_length,byteorder = "big")
+
+    curve_lst = supported_groups_extension[6:6+length_curve_length_int]
+
+    string_h = ">"
+    supported_groups_lst = []
+
+    for i in range(int(length_curve_length_int/2)):
+        string_h += "H"
+
+
+    tuple_supported_group = struct.unpack(string_h,curve_lst)
+
+    for group in tuple_supported_group:
+        group = group.to_bytes(2,byteorder="big")
+        supported_groups_lst.append(group)
+
+    return supported_groups_lst
 
 
 
-
-
-
-
-def add_header_to_server_encrypted_extensions(packet,header_info,record_number):
+def add_header_to_server_encrypted_packets(packet,header_info_input,record_number):
 
     record_length = len(packet)
     record_length_bytes = record_length.to_bytes(2,byteorder="big")
@@ -514,51 +548,7 @@ def add_header_to_server_encrypted_extensions(packet,header_info,record_number):
     # header_info_bytes = header_info.to_bytes(1,byteorder="big")
     record_number_bytes = record_number.to_bytes(2,byteorder="big")
 
-    return header_info + record_number_bytes + record_length_bytes + packet
-
-
-
-
-def parsing_dtls_packet(dtls_packet,dtls_secure_decrypt):
-
-    packets_lst = []
-
-    current_len = 0
-    packet_len = len(dtls_packet)
-    current_packet = dtls_packet
-
-
-    while current_len < packet_len:
-        record_first_byte = current_packet[0]
-        record_first_byte_bytes = record_first_byte.to_bytes(1)
-
-        if record_first_byte_bytes == handshake_type:
-            print("this packet is a server hello packet")
-            record_header = current_packet[:13]
-            length = record_header[-2:]
-            server_random,cipher_suits_in,server_chosen_group,public_key_server = (current_packet[:length])
-
-            if server_random is None or cipher_suits_in is None or server_chosen_group is None or public_key_server is None:
-                print("something gone wrong at server_hello packet in parsing_dtls_packet")
-
-            else:
-                current_lst = [SERVER_HELLO_PACKET,server_random,cipher_suits_in,server_chosen_group,public_key_server,current_packet[13:13 + length]]
-                packets_lst.append(current_lst)
-
-            current_len += length
-            current_packet = current_packet[13+length:]
-
-
-        elif record_first_byte == header_info:
-            length = current_packet[3:5]
-            length = int.from_bytes(length,byteorder="big")
-
-            packet_to_decrypt = current_packet[length + 5:]
-            plain_text = dtls_secure_decrypt.decrypt_and_mask(packet_to_decrypt)
-
-
-
-
+    return header_info_input + record_number_bytes + record_length_bytes + packet
 
 
 
@@ -596,6 +586,112 @@ def unit_records(lst_record_1,lst_record_2):
             print(final_packet.hex())
             return True,final_packet
 
+
+
+def int_to_bytes(length,num_of_bytes,byteorder_input):
+
+    return length.to_bytes(num_of_bytes,byteorder=byteorder_input)
+
+
+
+
+
+def certificate(seq_num,certificate_self):
+
+    certificate_packet = b""
+    request_context = b"\x00"
+    certificate_extensions = b"\x00\x00"
+
+
+    certificate_packet = certificate_extensions + certificate_packet
+
+    certificate_bytes = certificate_self._cert.public_bytes(
+        encoding=serialization.Encoding.DER
+    )
+    print("the_certificate in certificate: ",certificate_bytes.hex())
+
+    certificate_packet = certificate_bytes + certificate_packet
+
+    certificate_length = len(certificate_packet)
+    certificate_length = int_to_bytes(certificate_length,3,"big")
+
+    certificate_packet = certificate_length + certificate_packet
+
+    certificate_length = len(certificate_packet)
+    certificate_length = int_to_bytes(certificate_length,3,"big")
+
+    certificate_packet = certificate_length + certificate_packet
+    certificate_packet = request_context + certificate_packet
+
+    fragment_length = len(certificate_packet)
+
+
+    if fragment_length > 1200:
+        message_splitting()
+
+    else:
+        fragment_length = int_to_bytes(fragment_length, 3, "big")
+        fragment_offset = b"\x00\x00\x00"
+        certificate_packet = handshake_message_sequence_number_certificate + fragment_offset + fragment_length + certificate_packet
+        length_data = len(certificate_packet)
+        length_data = int_to_bytes(length_data,3,"big")
+
+        handshake_header = handshake_message_type_certificate + length_data
+        certificate_packet = handshake_header + certificate_packet
+        certificate_packet = certificate_packet + handshake_type
+
+        return [certificate_packet],seq_num + 1,seq_num + 1
+
+
+
+
+
+def certificate_parsing(packet):
+    handshake_reconstruction_data = packet[4:12]
+    fragment_length =  handshake_reconstruction_data[5:8]
+    fragment_length = int.from_bytes(fragment_length,byteorder="big")
+
+    data = packet[12:12+fragment_length]
+    print(data)
+
+    certificates_length = data[1:4]
+    certificates_length = int.from_bytes(certificates_length,byteorder="big")
+
+    certificates_data = data[4:4+certificates_length]
+
+    bytes_of_certificate = certificates_data[0:3]
+    bytes_of_certificate = int.from_bytes(bytes_of_certificate,byteorder="big")
+
+    the_certificate = certificates_data[3:1 + bytes_of_certificate]
+    print("the_certificate in certificate_parsing: ",the_certificate.hex())
+
+    return the_certificate
+
+
+
+#need to finish here the else logic
+def check_if_full_packet(packet_lst):
+
+    if len(packet_lst) == 1:
+        return True,None
+    else:
+        return False,packet_lst
+
+
+
+
+def remove_header(packet):
+
+    msg_type = packet[0]
+    msg_type = int_to_bytes(msg_type,1,"big")
+
+    if msg_type == server_hello_type or msg_type == client_hello_type:
+        packet_to_return = packet[25:]
+        return packet_to_return
+
+    else:
+        packet_to_return = packet[12:]
+        return packet_to_return
 
 
 
