@@ -7,15 +7,19 @@ import hashlib
 from stun_client import stun_request,keep_alive_udp_socket
 from tcp_by_size import recvSend
 from constant import SIGNALING_SERVER_IP_MAIN_SERVER,DH_START,DH_MSG,ROOM_REQUEST,DELIMITER,IP_PORT_EXT_MSG,SIGNALING_SERVER_PORT,SIGNALING_SERVER_IP_MAIN_CLIENT,CERTIFICATE_TYPE
-from constant import HANDSHAKE_MSG_SERVER_HELLO,HANDSHAKE_MSG_CLIENT_HELLO,HANDSHAKE_MSG_ENCRYPTED_EXTENSIONS,HEADER_INFO_INT,HANDSHAKE_TYPE,ENCRYPTED_EXTENSIONS_TYPE
+from constant import HANDSHAKE_MSG_SERVER_HELLO,HANDSHAKE_MSG_CLIENT_HELLO,HANDSHAKE_MSG_ENCRYPTED_EXTENSIONS,HEADER_INFO_INT,HANDSHAKE_TYPE,ENCRYPTED_EXTENSIONS_TYPE,DELIMITER_BYTES
 from DH_class import DH
 from hole_punching import connect_to_peer
 from aiortc import RTCCertificate
 from dtls import client_hello, client_hello_parsing, server_hello, server_hello_parsing, full_packet, \
     tls_handshake_header_parsing, server_hello_type, encrypted_extensions_type, server_encrypted_extensions, \
-    add_header_to_server_encrypted_packets,certificate_parsing,remove_header,check_if_full_packet
-from dtls import server_encrypted_extensions_seq_num,add_header_to_server_encrypted_packets,unit_records,server_encrypted_extensions_parsing,certificate
+    add_header_to_server_encrypted_packets,certificate_parsing,remove_header,check_if_full_packet,certificate_verify
+from dtls import server_encrypted_extensions_seq_num,add_header_to_server_encrypted_packets,unit_records,server_encrypted_extensions_parsing,certificate,select_signature_algorithms
 from dtls_secure_session import DTLS13_SecureSession
+from build_certificate import BuildCertificate
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+
 
 
 
@@ -34,8 +38,10 @@ class Main:
                 self.signaling_server_ip = SIGNALING_SERVER_IP_MAIN_CLIENT
 
             self.recv_send, self.client_socket = self.create_client_socket_recv_send()
-            self.certificate = RTCCertificate.generateCertificate()
-            self.fingerprints = self.certificate.getFingerprints()
+
+            self.certificate_object = BuildCertificate()
+            self.fingerprints,self.fingerprint_algorithm = self.certificate_object.fingerprint()
+
 
             self.other_fingerprints = None
             self.other_sha_algorithm = None
@@ -71,6 +77,9 @@ class Main:
             }
             self.other_seq_num = None
             self.seq_number_epoch = 0
+            self.signature_algorithms_client_lst = None
+            self.selected_algorithm = None
+            self.other_rsa_public_key = None
 
 
         def supported_groups_logic(self,supported_groups_lst):
@@ -127,30 +136,36 @@ class Main:
 
 
         def client_hello_logic(self,data):
-            self.other_random_dtls, self.cipher_suits, self.group, self.other_public_key = client_hello_parsing(data)
-            print("other_random_dtls: ", self.other_random_dtls, " cipher_suits: ", self.cipher_suits, " group: ",self.group, " other_public_key: ", self.other_public_key)
+            self.other_random_dtls, self.cipher_suits, self.group, self.other_public_key,self.signature_algorithms_client_lst = client_hello_parsing(data)
+            print("other_random_dtls: ", self.other_random_dtls, " cipher_suits: ", self.cipher_suits, " group: ",self.group, " other_public_key: ", self.other_public_key,"signature_algorithms_client_lst: ",self.signature_algorithms_client_lst)
+
+            self.selected_algorithm = select_signature_algorithms(self.signature_algorithms_client_lst)
+
+            if self.selected_algorithm is not None:
+                return True
+            return False
 
 
 
         def certificate_logic(self,packet):
             print(packet.hex())
             the_certificate = certificate_parsing(packet)
+            the_certificate_2 = certificate_parsing(packet)
+
             print("the_certificate in certificate_logic: ",the_certificate.hex())
 
 
             if self.other_sha_algorithm == "sha-256":
-                sha256 = hashlib.sha256()
 
-                sha256.update(the_certificate)
-                peer_fingerprint = sha256.hexdigest()
-                print("peer_fingerprint: ",peer_fingerprint)
 
-                other_fingerprints_check = self.other_fingerprints.replace(":","")
-                print("other_fingerprints_check: ",other_fingerprints_check)
 
-                other_fingerprints_check = other_fingerprints_check.lower()
+                certificate_object_other = x509.load_der_x509_certificate(the_certificate_2)
 
-                if other_fingerprints_check == peer_fingerprint:
+                peer_fingerprint = certificate_object_other.fingerprint(hashes.SHA256())
+                self.other_rsa_public_key = certificate_object_other.public_key()
+
+
+                if self.other_fingerprints == peer_fingerprint:
                     return True
                 return False
 
@@ -212,7 +227,14 @@ class Main:
 
 
                 else:
-                    self.client_hello_logic(data)
+                    client_hello_good = self.client_hello_logic(data)
+                    client_hello_packet = remove_header(data)
+                    self.handshake_packets["client_hello"] = client_hello_packet
+
+                    if not client_hello_good:
+                        disconnect = True
+                        break
+
                     if self.other_random_dtls is None or self.cipher_suits is None or self.group is None or self.other_public_key is None:
                         print("something gone wrong at hello_logic in dtls_handshake_server")
                         disconnect = True
@@ -229,11 +251,33 @@ class Main:
 
 
             server_hello_packet,self.ecdh_class,self.seq_number = server_hello(self.seq_number,self.random_dtls,self.cipher_suits,HANDSHAKE_MSG_SERVER_HELLO)
-            self.create_ecdh_keys()
 
+            if len(server_hello_packet) > 1:
+                full_packet()
+            else:
+                server_hello_packet_without_header = remove_header(server_hello_packet[0])
+                self.handshake_packets["server_hello"] = server_hello_packet_without_header
+
+            self.create_ecdh_keys()
             server_encrypted_extensions_packet,self.seq_number_epoch,seq_num_server_encrypted_extensions = server_encrypted_extensions(self.seq_number_epoch,HANDSHAKE_MSG_ENCRYPTED_EXTENSIONS)
 
-            certificate_server,self.seq_number_epoch,seq_num_certificate = certificate(self.seq_number_epoch,self.certificate)
+            if len(server_encrypted_extensions_packet) > 1:
+                full_packet()
+
+            else:
+                server_encrypted_extensions_packet_without_header = remove_header(server_encrypted_extensions_packet[0])
+                self.handshake_packets["server_encrypted_extension"] = server_encrypted_extensions_packet_without_header
+
+            certificate_server,self.seq_number_epoch,seq_num_certificate = certificate(self.seq_number_epoch,self.certificate_object.to_der())
+
+            if len(certificate_server) > 1:
+                full_packet()
+            else:
+                certificate_server_without_header = remove_header(certificate_server[0])
+                self.handshake_packets["server_certificate"] = certificate_server_without_header
+
+            certificate_verify(self.handshake_packets,self.selected_algorithm,self.certificate_object)
+
 
             encrypted_extensions_packet_encrypt = []
             for msg in server_encrypted_extensions_packet:
@@ -266,6 +310,8 @@ class Main:
                 for msg in encrypted_extensions_packet_encrypt:
                     self.udp_socket.sendto(msg,(self.other_ip,self.other_port))
 
+                for msg in certificate_packet_encrypt:
+                    self.udp_socket.sendto(msg, (self.other_ip, self.other_port))
 
 
 
@@ -500,7 +546,10 @@ class Main:
             room_request = ROOM_REQUEST +room_client
             self.recv_send_crypt.send_with_size(room_request)
 
-            to_send_ip_port_ext = IP_PORT_EXT_MSG + DELIMITER + str(self.ip) + DELIMITER + str(self.port) + DELIMITER + self.fingerprints[0].algorithm + DELIMITER + self.fingerprints[0].value
+
+            port_bytes = self.port.to_bytes(2,byteorder="big")
+
+            to_send_ip_port_ext = IP_PORT_EXT_MSG.encode() + DELIMITER_BYTES + self.ip.encode() + DELIMITER_BYTES + port_bytes + DELIMITER_BYTES + self.fingerprint_algorithm.encode() + DELIMITER_BYTES + self.fingerprints
             self.recv_send_crypt.send_with_size(to_send_ip_port_ext)
 
 
@@ -534,15 +583,15 @@ class Main:
             self.recv_send_crypt = recvSend(self.client_socket,key)
             self.find_room()
 
-            data = self.recv_send_crypt.recv_by_size().decode()
-            data_lst = data.split(DELIMITER)
+            data = self.recv_send_crypt.recv_by_size()
+            data_lst = data.split(DELIMITER_BYTES)
 
-            print("the other ip:",data_lst[2],"port ext: ",data_lst[1],"the hash_algorithm: ",data_lst[3],"the fingerprints_value: ",data_lst[4])
-            self.other_sha_algorithm = data_lst[3]
+            # print("the other ip:",data_lst[2].decode(),"port ext: ",data_lst[1],"the hash_algorithm: ",data_lst[3],"the fingerprints_value: ",data_lst[4])
+            self.other_sha_algorithm = data_lst[3].decode()
             self.other_fingerprints = data_lst[4]
 
-            self.other_ip = data_lst[2]
-            self.other_port = int(data_lst[1])
+            self.other_ip = data_lst[2].decode()
+            self.other_port = int.from_bytes(data_lst[1],byteorder="big")
 
             self.hole_punching_func()
 

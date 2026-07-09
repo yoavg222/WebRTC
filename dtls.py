@@ -1,6 +1,7 @@
 import struct
+import hashlib
+
 from ECDH_class import ECDH
-from cryptography.hazmat.primitives import serialization
 
 
 signature_algorithms = [
@@ -30,6 +31,19 @@ supported_groups = [
     0x0018,
     0x0019,
     0x0100
+]
+
+
+
+signature_algorithms_server = [
+    b'\x08\x04',
+    b'\x08\x06',
+    b'\x08\x0b',
+    b'\x08\x05',
+    b'\x08\x0a',
+    b'\x08\x09',
+    b'\x06\x03',
+    b'\x05\x03'
 ]
 
 
@@ -64,6 +78,17 @@ handshake_message_type_certificate = b"\x0b"
 
 server_hello_coming = False
 
+
+
+
+
+def select_signature_algorithms(signature_algorithms_lst):
+
+    for algorithm in signature_algorithms_server:
+        if algorithm in signature_algorithms_lst:
+            return algorithm
+
+    return None
 
 
 def support_ecdh_group(group):
@@ -112,12 +137,12 @@ def server_pick_cipher_suits(cipher_suits_client):
 
 
 def message_splitting_recv():
-    pass
+    print("im in the message_splitting_recv")
 
 
 
 def message_splitting():
-    pass
+    print("im in the message_splitting")
 
 
 def full_packet():
@@ -152,7 +177,6 @@ def tls_handshake_header_parsing(packet):
 
 
 def client_hello_record_parsing(packet,length_in_record):
-    global signature_algorithms
 
     data = packet[25:25 + length_in_record]
     client_random = data[2:34]
@@ -212,7 +236,7 @@ def client_hello_record_parsing(packet,length_in_record):
 
 
 
-    return client_random,cipher_suits_in,client_chosen_group,client_public_key
+    return client_random,cipher_suits_in,client_chosen_group,client_public_key,signature_algorithms_client
 
 
 
@@ -260,11 +284,11 @@ def client_hello_parsing(client_hello_packet):
 
     if dtls_record_type != 22:
         print("this packet is not Handshake packet")
-        return None,None,None,None
+        return None,None,None,None,None
 
     if dtls_protocol_version != version:
         print("this packet is not in the good version")
-        return None,None,None,None
+        return None,None,None,None,None
 
 
 
@@ -281,11 +305,11 @@ def client_hello_parsing(client_hello_packet):
     if length_in_record > fragment_length or fragment_offset > 0:
         message_splitting_recv()
     else:
-        client_random,cipher_suits_in,client_chosen_group,public_key_client = client_hello_record_parsing(client_hello_packet,fragment_length)
-        return client_random,cipher_suits_in,client_chosen_group,public_key_client
+        client_random,cipher_suits_in,client_chosen_group,public_key_client,signature_algorithms_client_lst = client_hello_record_parsing(client_hello_packet,fragment_length)
+        return client_random,cipher_suits_in,client_chosen_group,public_key_client,signature_algorithms_client_lst
 
 
-    return None,None,None,None
+    return None,None,None,None,None
 
 
 
@@ -596,7 +620,7 @@ def int_to_bytes(length,num_of_bytes,byteorder_input):
 
 
 
-def certificate(seq_num,certificate_self):
+def certificate(seq_num,certificate_der):
 
     certificate_packet = b""
     request_context = b"\x00"
@@ -605,12 +629,10 @@ def certificate(seq_num,certificate_self):
 
     certificate_packet = certificate_extensions + certificate_packet
 
-    certificate_bytes = certificate_self._cert.public_bytes(
-        encoding=serialization.Encoding.DER
-    )
-    print("the_certificate in certificate: ",certificate_bytes.hex())
 
-    certificate_packet = certificate_bytes + certificate_packet
+    print("the_certificate in certificate: ",certificate_der.hex())
+
+    certificate_packet = certificate_der + certificate_packet
 
     certificate_length = len(certificate_packet)
     certificate_length = int_to_bytes(certificate_length,3,"big")
@@ -641,7 +663,6 @@ def certificate(seq_num,certificate_self):
         certificate_packet = certificate_packet + handshake_type
 
         return [certificate_packet],seq_num + 1,seq_num + 1
-
 
 
 
@@ -685,7 +706,7 @@ def remove_header(packet):
     msg_type = packet[0]
     msg_type = int_to_bytes(msg_type,1,"big")
 
-    if msg_type == server_hello_type or msg_type == client_hello_type:
+    if msg_type == handshake_type or msg_type == handshake_type:
         packet_to_return = packet[25:]
         return packet_to_return
 
@@ -693,6 +714,41 @@ def remove_header(packet):
         packet_to_return = packet[12:]
         return packet_to_return
 
+
+
+
+def signature_func(algorithm,packet,certificate_object):
+
+    if algorithm == "RSA_PSS_RSAE_SHA256":
+        hasher = hashlib.sha256()
+        hasher.update(packet)
+
+        packet_after_hash = hasher.digest()
+
+        # packet_after_sign =
+
+
+
+
+
+
+
+
+
+
+def certificate_verify(handshake_packets,signature,certificate_object):
+
+    client_hello_packet = handshake_packets["client_hello"]
+    server_hello_packet = handshake_packets["server_hello"]
+    server_encrypted_extensions_packet = handshake_packets["server_encrypted_extension"]
+    server_certificate_packet = handshake_packets["server_certificate"]
+
+    final_packet = client_hello_packet + server_hello_packet + server_encrypted_extensions_packet + server_certificate_packet
+
+    if signature == b'\x08\x04':
+        value = "RSA_PSS_RSAE_SHA256"
+
+        packet = signature_func(value,final_packet,certificate_object)
 
 
 

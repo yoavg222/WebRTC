@@ -29,4 +29,8 @@ ENCRYPTED_EXTENSIONS_TYPE = b"\x08"
 CERTIFICATE_TYPE = b"\x0b"
 HEADER_INFO_INT = 46
 
+PATH_STORE_PRIVATE_KEY = "C:\\School_11_Grade\\WebRTC\\key_private.pem"
+PATH_STORE_PUBLIC_KEY = "C:\\School_11_Grade\\WebRTC\\key_public.pem"
+PATH_TO_STORE_CERTIFICATE = "C:\\School_11_Grade\\WebRTC\\certificate.pem"
 
+DELIMITER_BYTES = b"|"

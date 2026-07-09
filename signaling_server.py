@@ -3,7 +3,7 @@ import threading
 import time
 from tcp_by_size import recvSend
 from DH_class import DH
-from constant import DH_START,IP_ADDRESS_ALLOWLISTING,DH_MSG
+from constant import DH_START, IP_ADDRESS_ALLOWLISTING, DH_MSG, DELIMITER_BYTES
 from constant import IP_PORT_EXT_MSG,DELIMITER,SIGNALING_SERVER_PORT
 
 all_to_die = False
@@ -21,12 +21,12 @@ def find_two_to_room(recv_send_crypt):
     data_lst = data.split(DELIMITER)
     print(data_lst)
 
-    port_ip_ex = recv_send_crypt.recv_by_size().decode()
-    port_ip_ex_lst = port_ip_ex.split(DELIMITER)
+    port_ip_ex = recv_send_crypt.recv_by_size()
+    port_ip_ex_lst = port_ip_ex.split(DELIMITER_BYTES)
     print(port_ip_ex_lst)
 
     ip_ex = port_ip_ex_lst[1]
-    port_ex = port_ip_ex_lst[2]
+    port_ex = int.from_bytes(port_ip_ex_lst[2],byteorder="big")
     hash_algorithm = port_ip_ex_lst[3]
     fingerprints_value = port_ip_ex_lst[4]
 
@@ -59,8 +59,9 @@ def find_two_to_room(recv_send_crypt):
             sock_to_send = sock_lst[i]
         i+=1
 
+    port_ex_bytes = port_ex.to_bytes(2,byteorder="big")
 
-    to_send = IP_PORT_EXT_MSG + DELIMITER + port_ex + DELIMITER + ip_ex + DELIMITER + hash_algorithm + DELIMITER + fingerprints_value
+    to_send = IP_PORT_EXT_MSG.encode() + DELIMITER_BYTES + port_ex_bytes + DELIMITER_BYTES + ip_ex + DELIMITER_BYTES + hash_algorithm + DELIMITER_BYTES + fingerprints_value
     sock_to_send.send_with_size(to_send)
 
 
