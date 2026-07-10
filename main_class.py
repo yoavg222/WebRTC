@@ -4,21 +4,22 @@ import time
 import random
 import hashlib
 
+
 from stun_client import stun_request,keep_alive_udp_socket
 from tcp_by_size import recvSend
-from constant import SIGNALING_SERVER_IP_MAIN_SERVER,DH_START,DH_MSG,ROOM_REQUEST,DELIMITER,IP_PORT_EXT_MSG,SIGNALING_SERVER_PORT,SIGNALING_SERVER_IP_MAIN_CLIENT,CERTIFICATE_TYPE
+from constant import SIGNALING_SERVER_IP_MAIN_SERVER,DH_START,DH_MSG,ROOM_REQUEST,DELIMITER,IP_PORT_EXT_MSG,SIGNALING_SERVER_PORT,SIGNALING_SERVER_IP_MAIN_CLIENT,CERTIFICATE_TYPE,CERT_VERIFY_TYPE
 from constant import HANDSHAKE_MSG_SERVER_HELLO,HANDSHAKE_MSG_CLIENT_HELLO,HANDSHAKE_MSG_ENCRYPTED_EXTENSIONS,HEADER_INFO_INT,HANDSHAKE_TYPE,ENCRYPTED_EXTENSIONS_TYPE,DELIMITER_BYTES
 from DH_class import DH
 from hole_punching import connect_to_peer
-from aiortc import RTCCertificate
 from dtls import client_hello, client_hello_parsing, server_hello, server_hello_parsing, full_packet, \
-    tls_handshake_header_parsing, server_hello_type, encrypted_extensions_type, server_encrypted_extensions, \
+    tls_handshake_header_parsing, extract_signature_cert_verify, encrypted_extensions_type, server_encrypted_extensions, \
     add_header_to_server_encrypted_packets,certificate_parsing,remove_header,check_if_full_packet,certificate_verify
 from dtls import server_encrypted_extensions_seq_num,add_header_to_server_encrypted_packets,unit_records,server_encrypted_extensions_parsing,certificate,select_signature_algorithms
 from dtls_secure_session import DTLS13_SecureSession
 from build_certificate import BuildCertificate
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 
 
 
@@ -175,6 +176,45 @@ class Main:
 
 
 
+        def cert_verify_logic(self,data):
+            print("data in cert_verify_logic: ",data.hex())
+
+            client_hello_packet = self.handshake_packets["client_hello"]
+            server_hello_packet = self.handshake_packets["server_hello"]
+            server_encrypted_extensions_packet = self.handshake_packets["server_encrypted_extension"]
+            server_certificate_packet = self.handshake_packets["server_certificate"]
+
+            final_packet = client_hello_packet + server_hello_packet + server_encrypted_extensions_packet + server_certificate_packet
+            print("final_packet cert_verify_logic: ",final_packet)
+
+            other_peer_signature = extract_signature_cert_verify(data)
+
+            print("other_peer_signature: ",other_peer_signature.hex())
+
+            try:
+                self.other_rsa_public_key.verify(
+                    other_peer_signature,
+                    final_packet,
+                    padding.PSS(
+                        mgf = padding.MGF1(hashes.SHA256()),
+                        salt_length = padding.PSS.MAX_LENGTH
+                    ),
+                    hashes.SHA256())
+
+                print("the verification in cert_verify_logic success")
+                return True
+
+
+            except:
+                print("the verification in cert_verify_logic not success")
+                return False
+
+
+
+
+
+
+
 
 
         def create_ecdh_keys(self):
@@ -228,12 +268,13 @@ class Main:
 
                 else:
                     client_hello_good = self.client_hello_logic(data)
-                    client_hello_packet = remove_header(data)
-                    self.handshake_packets["client_hello"] = client_hello_packet
 
                     if not client_hello_good:
                         disconnect = True
                         break
+
+                    client_hello_packet = remove_header(data)
+                    self.handshake_packets["client_hello"] = client_hello_packet
 
                     if self.other_random_dtls is None or self.cipher_suits is None or self.group is None or self.other_public_key is None:
                         print("something gone wrong at hello_logic in dtls_handshake_server")
@@ -276,7 +317,7 @@ class Main:
                 certificate_server_without_header = remove_header(certificate_server[0])
                 self.handshake_packets["server_certificate"] = certificate_server_without_header
 
-            certificate_verify(self.handshake_packets,self.selected_algorithm,self.certificate_object)
+            certificate_verify_lst,self.seq_number_epoch,seq_num_cert_verify = certificate_verify(self.handshake_packets,self.selected_algorithm,self.certificate_object,self.seq_number_epoch)
 
 
             encrypted_extensions_packet_encrypt = []
@@ -295,13 +336,20 @@ class Main:
                 certificate_packet_encrypt.append(packet)
 
 
+            certificate_verify_encrypt = []
+
+            for msg in certificate_verify_lst:
+                seq_num = seq_num_cert_verify
+                packet,header_info,record_number = self.dtls_secure_encrypt.encrypt_and_mask(seq_num,msg)
+                packet = add_header_to_server_encrypted_packets(packet,header_info,record_number)
+                certificate_verify_encrypt.append(packet)
+
+
+
             unit_work,msg = unit_records(server_hello_packet,encrypted_extensions_packet_encrypt)
 
             if unit_work:
                 self.udp_socket.sendto(msg,(self.other_ip,self.other_port))
-
-                for msg in certificate_packet_encrypt:
-                    self.udp_socket.sendto(msg,(self.other_ip,self.other_port))
 
             else:
                 for msg in server_hello_packet:
@@ -310,8 +358,19 @@ class Main:
                 for msg in encrypted_extensions_packet_encrypt:
                     self.udp_socket.sendto(msg,(self.other_ip,self.other_port))
 
+
+            unit_work,msg = unit_records(certificate_packet_encrypt,certificate_verify_encrypt)
+
+            if unit_work:
+                self.udp_socket.sendto(msg,(self.other_ip,self.other_port))
+
+            else:
                 for msg in certificate_packet_encrypt:
                     self.udp_socket.sendto(msg, (self.other_ip, self.other_port))
+
+                for msg in certificate_verify_lst:
+                    self.udp_socket.sendto(msg, (self.other_ip, self.other_port))
+
 
 
 
@@ -394,7 +453,10 @@ class Main:
                                 print("something gone wrong at server_hello packet")
 
                             else:
-                                self.handshake_packets["server_hello"] = remove_header(current_packet)
+
+                                current_record = current_packet[:length + 13]
+
+                                self.handshake_packets["server_hello"] = remove_header(current_record)
                                 coming_msg["server_hello"] = True
 
                                 current_len += length + len(record_header)
@@ -427,7 +489,7 @@ class Main:
                                     need_to_decrypt_lst.remove(msg)
 
 
-                                elif plain_text[0] == ENCRYPTED_EXTENSIONS_TYPE and coming_msg["server_encrypted_extension"]:
+                                elif plain_text[0] == CERTIFICATE_TYPE and coming_msg["server_encrypted_extension"]:
 
                                     mitm_check = self.certificate_logic(plain_text)
 
@@ -450,10 +512,12 @@ class Main:
                             record_header = current_packet[:5]
                             length = int.from_bytes(current_packet[3:5], byteorder="big")
 
+                            current_record = current_packet[:5 + length]
+
                             if coming_msg["server_hello"]:
 
                                 print("current header in if coming_msg[server_hello]: ", current_packet.hex())
-                                plain_text, seq_number = self.dtls_secure_decrypt.decrypt_and_mask(current_packet)
+                                plain_text, seq_number = self.dtls_secure_decrypt.decrypt_and_mask(current_record)
 
                                 plain_text_handshake_mag_type = plain_text[0]
                                 plain_text_handshake_mag_type = plain_text_handshake_mag_type.to_bytes(1)
@@ -482,7 +546,6 @@ class Main:
                                 if plain_text_handshake_mag_type == CERTIFICATE_TYPE:
                                     if coming_msg["server_encrypted_extension"]:
 
-                                        print(plain_text)
                                         mitm_check = self.certificate_logic(plain_text)
 
                                         if not mitm_check:
@@ -502,6 +565,21 @@ class Main:
                                         need_to_decrypt_lst.append(current_packet)
                                         current_len += length + len(record_header)
                                         current_packet = current_packet[5 + length:]
+
+
+                                if plain_text_handshake_mag_type == CERT_VERIFY_TYPE:
+                                    if coming_msg["server_certificate"]:
+                                        good_verification = self.cert_verify_logic(plain_text)
+                                        current_len += length + len(record_header)
+                                        current_packet = current_packet[5 + length:]
+
+                                    else:
+                                        need_to_decrypt_lst.append(current_packet)
+                                        current_len += length +len(record_header)
+                                        current_packet = current_packet[5 + length:]
+
+
+
 
                             else:
                                 need_to_decrypt_lst.append(current_packet)

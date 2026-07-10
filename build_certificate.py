@@ -113,6 +113,11 @@ class BuildCertificate:
         return self.certificate.fingerprint(hashes.SHA256()),"sha-256"
 
 
+
     def to_der(self):
         return self.certificate.public_bytes(serialization.Encoding.DER)
 
+
+
+    def get_private_key(self):
+        return self.private_key

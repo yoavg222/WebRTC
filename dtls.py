@@ -2,6 +2,8 @@ import struct
 import hashlib
 
 from ECDH_class import ECDH
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 
 
 signature_algorithms = [
@@ -75,6 +77,9 @@ encrypted_extensions_type = b"\x08"
 header_info = b"\x2e"
 handshake_message_sequence_number_certificate = b"\x00\x02"
 handshake_message_type_certificate = b"\x0b"
+handshake_msg_seq_cert_verify = b"\x00\x03"
+handshake_msg_type_cert_verify = b"\x0f"
+
 
 server_hello_coming = False
 
@@ -720,40 +725,86 @@ def remove_header(packet):
 def signature_func(algorithm,packet,certificate_object):
 
     if algorithm == "RSA_PSS_RSAE_SHA256":
-        hasher = hashlib.sha256()
-        hasher.update(packet)
-
-        packet_after_hash = hasher.digest()
-
-        # packet_after_sign =
 
 
+        private_key = certificate_object.get_private_key()
+
+        signature = private_key.sign(
+            packet,
+            padding.PSS(mgf = padding.MGF1(hashes.SHA256()),
+            salt_length = padding.PSS.MAX_LENGTH),
+            hashes.SHA256()
+        )
+
+        print("signature: ",signature.hex())
+
+        return signature
 
 
 
 
 
 
+def certificate_verify(handshake_packets,signature,certificate_object,seq_num):
 
-
-def certificate_verify(handshake_packets,signature,certificate_object):
 
     client_hello_packet = handshake_packets["client_hello"]
     server_hello_packet = handshake_packets["server_hello"]
     server_encrypted_extensions_packet = handshake_packets["server_encrypted_extension"]
     server_certificate_packet = handshake_packets["server_certificate"]
 
+    print("client_hello_packet in certificate_verify: ",client_hello_packet.hex())
+    print("server_hello_packet in certificate_verify: ",server_hello_packet.hex())
+    print("server_encrypted_extensions_packet in certificate_verify: ",server_encrypted_extensions_packet.hex())
+    print("server_certificate_packet in certificate_verify: ",server_certificate_packet.hex())
+
+
+
     final_packet = client_hello_packet + server_hello_packet + server_encrypted_extensions_packet + server_certificate_packet
+    print("final_packet in certificate_verify: ",final_packet.hex())
 
     if signature == b'\x08\x04':
         value = "RSA_PSS_RSAE_SHA256"
 
-        packet = signature_func(value,final_packet,certificate_object)
+        signature_packet = signature_func(value,final_packet,certificate_object)
+
+        length_signature = len(signature_packet)
+        length_signature_bytes = length_signature.to_bytes(2,byteorder="big")
+        value_signature = b'\x08\x04'
+
+        packet_to_return = value_signature + length_signature_bytes + signature_packet
+
+        fragment_length = len(packet_to_return)
+        if fragment_length > 1200:
+            message_splitting()
+
+        else:
+            fragment_length_bytes = fragment_length.to_bytes(3,byteorder="big")
+            fragment_offset = b"\x00\x00\x00"
+
+            packet_to_return = handshake_msg_seq_cert_verify + fragment_offset + fragment_length_bytes + packet_to_return
+
+            packet_to_return = handshake_msg_type_cert_verify + fragment_length_bytes + packet_to_return + handshake_type
+
+            return [packet_to_return],seq_num + 1,seq_num
+
+
+    else:
+        return None
 
 
 
 
 
+
+def extract_signature_cert_verify(packet):
+
+    length = packet[9:12]
+    length = int.from_bytes(length,byteorder="big")
+
+    data = packet[16:12+length]
+
+    return data
 
 
 
