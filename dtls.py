@@ -141,16 +141,18 @@ def server_pick_cipher_suits(cipher_suits_client):
     return None
 
 
-def message_splitting_recv():
-    print("im in the message_splitting_recv")
-
-
-
 def message_splitting():
-    print("im in the message_splitting")
+    pass
 
 
-def full_packet():
+
+
+def full_packet_send():
+    pass
+
+
+
+def full_packet_recv():
     pass
 
 
@@ -786,11 +788,11 @@ def certificate_verify(handshake_packets,signature,certificate_object,seq_num):
 
             packet_to_return = handshake_msg_type_cert_verify + fragment_length_bytes + packet_to_return + handshake_type
 
-            return [packet_to_return],seq_num + 1,seq_num
+            return [packet_to_return],seq_num + 1,seq_num + 1
 
 
     else:
-        return None
+        return None,None,None
 
 
 
@@ -802,9 +804,11 @@ def extract_signature_cert_verify(packet):
     length = packet[9:12]
     length = int.from_bytes(length,byteorder="big")
 
+
+    signature_value = struct.unpack(">H",packet[12:14])[0]
     data = packet[16:12+length]
 
-    return data
+    return data,signature_value
 
 
 

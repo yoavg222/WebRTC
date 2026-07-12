@@ -63,12 +63,15 @@ class DTLS13_SecureSession:
 
 
         sample = cipher_text[5:21]
+        print("sample in encrypt :",sample.hex())
 
         encryptor = self.sn_cipher.encryptor()
         mask_part_1 = encryptor.update(sample)
         mask_part_2 = encryptor.finalize()
 
         mask = mask_part_1 + mask_part_2
+        print("mask in encrypt: ",mask)
+
 
 
         seq_num_bytes = self.mask_on_header(mask,seq_num_bytes)
@@ -83,6 +86,8 @@ class DTLS13_SecureSession:
 
         header_info = packet[0]
         sample = packet[10:26]
+        print("sample in decrypt_and_mask: ",sample.hex())
+
 
         encryptor = self.sn_cipher.encryptor()
         mask_part_1 = encryptor.update(sample)
@@ -91,6 +96,7 @@ class DTLS13_SecureSession:
         cipher_text = packet[5:]
 
         mask = mask_part_1 + mask_part_2
+        print("mask in decrypt: ",mask.hex())
 
         if header_info.to_bytes(1, byteorder="big") == self.header_info_const:
             print("good decrypt_mask_on_header")
@@ -116,8 +122,15 @@ class DTLS13_SecureSession:
         print("cipher_text in decrypt_and_mask: ", cipher_text.hex())
         print("key in decrypt_and_mask: ", self.traffic_key)
 
-        plain_text = self.aes_gcm.decrypt(nonce, cipher_text, header)
-        print("plain_text in decrypt_and_mask: ", plain_text.hex())
+        try:
+            plain_text = self.aes_gcm.decrypt(nonce, cipher_text, header)
+            print("plain_text in decrypt_and_mask: ", plain_text.hex())
+
+        except Exception as err:
+            print("error in decrypt_and_mask")
+            print(err)
+            return None,None
+
 
         return plain_text, seq_number
 
