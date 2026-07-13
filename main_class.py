@@ -297,6 +297,7 @@ class Main:
                 certificate_client_without_header = remove_header(certificate_msg[0])
                 if is_server:
                     self.handshake_packets["server_certificate"] = certificate_client_without_header
+
                 else:
                     self.handshake_packets["client_certificate"] = certificate_client_without_header
 
