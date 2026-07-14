@@ -23,6 +23,7 @@ class ECDH:
         self.server_handshake_key = None
         self.server_handshake_iv = None
         self.server_record_number_key = None
+        self.finished_key = None
 
 
     def shared_key_calculate(self,peer_key,group):
@@ -54,8 +55,6 @@ class ECDH:
         self.client_record_number_key = HKDF(
             algorithm=algorithm_sha, length=16, salt=None, info=b"client record number key"
         ).derive(self.shared_key)
-
-
         self.server_handshake_key = HKDF(
             algorithm=algorithm_sha, length=length, salt=None, info=b"server handshake key"
         ).derive(self.shared_key)
@@ -67,6 +66,12 @@ class ECDH:
         self.server_record_number_key = HKDF(
             algorithm=algorithm_sha, length=16, salt=None, info=b"server record number key"
         ).derive(self.shared_key)
+
+        self.finished_key = HKDF(
+            algorithm=algorithm_sha,length = 32,salt = None,info = b"finished"
+        ).derive(self.shared_key)
+
+
 
         return self.client_handshake_key,self.client_handshake_iv,self.client_record_number_key,self.server_handshake_key,self.server_handshake_iv,self.server_record_number_key
 
@@ -81,3 +86,7 @@ class ECDH:
             encoding = serialization.Encoding.Raw,
             format=serialization.PublicFormat.Raw
         )
+
+
+    def get_finished_key(self):
+        return self.finished_key

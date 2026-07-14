@@ -1,5 +1,7 @@
 import struct
+import hmac
 import hashlib
+
 
 from ECDH_class import ECDH
 from cryptography.hazmat.primitives import hashes
@@ -79,7 +81,8 @@ handshake_message_sequence_number_certificate = b"\x00\x02"
 handshake_message_type_certificate = b"\x0b"
 handshake_msg_seq_cert_verify = b"\x00\x03"
 handshake_msg_type_cert_verify = b"\x0f"
-
+handshake_msg_seq_finished = b"\x00\x04"
+finished_type = b"\x14"
 
 server_hello_coming = False
 
@@ -145,14 +148,7 @@ def message_splitting():
     pass
 
 
-
-
-def full_packet_send():
-    pass
-
-
-
-def full_packet_recv():
+def full_record_recv():
     pass
 
 
@@ -310,7 +306,7 @@ def client_hello_parsing(client_hello_packet):
 
 
     if length_in_record > fragment_length or fragment_offset > 0:
-        message_splitting_recv()
+        message_splitting()
     else:
         client_random,cipher_suits_in,client_chosen_group,public_key_client,signature_algorithms_client_lst = client_hello_record_parsing(client_hello_packet,fragment_length)
         return client_random,cipher_suits_in,client_chosen_group,public_key_client,signature_algorithms_client_lst
@@ -344,7 +340,7 @@ def server_hello_parsing(server_hello_packet):
 
 
     if length_in_record > fragment_length or fragment_offset > 0:
-        message_splitting_recv()
+        message_splitting()
     else:
         server_random,cipher_suits_in,server_chosen_group,public_key_server = server_hello_record_parsing(server_hello_packet,fragment_length)
         print("server hello: " ,server_random," ",cipher_suits_in," ",server_chosen_group," ",public_key_server)
@@ -742,6 +738,9 @@ def signature_func(algorithm,packet,certificate_object):
 
         return signature
 
+    else:
+        return None
+
 
 
 
@@ -797,18 +796,78 @@ def certificate_verify(handshake_packets,signature,certificate_object,seq_num):
 
 
 
-
-
 def extract_signature_cert_verify(packet):
 
     length = packet[9:12]
     length = int.from_bytes(length,byteorder="big")
 
-
     signature_value = struct.unpack(">H",packet[12:14])[0]
     data = packet[16:12+length]
 
     return data,signature_value
+
+
+
+
+def hmac_sha256(sha_data,finished_key):
+    return hmac.new(
+        finished_key,
+        sha_data,
+        hashlib.sha256
+    ).digest()
+
+
+
+def handshake_finished(verify_data,seq_num):
+
+
+
+    fragment_length = len(verify_data)
+
+    if fragment_length > 1200:
+        message_splitting()
+
+
+    else:
+
+        fragment_length_bytes = fragment_length.to_bytes(3,byteorder="big")
+        fragment_offset = b"\x00\x00\x00"
+
+        handshake_finished_packet = handshake_msg_seq_finished + fragment_offset + fragment_length_bytes
+        handshake_finished_packet = finished_type + fragment_length_bytes + handshake_finished_packet
+
+        handshake_finished_packet = handshake_finished_packet + verify_data + handshake_type
+
+        return [handshake_finished_packet],seq_num + 1,seq_num + 1
+
+
+
+
+
+
+
+
+def handshake_finish_parsing(packet):
+
+    data_length = packet[1:4]
+    fragment_length = packet[9:12]
+
+    if fragment_length != data_length:
+        print("poor handling of full_packet_recv()")
+        return None,False
+
+
+    fragment_length_int = int.from_bytes(fragment_length,byteorder="big")
+    verify_data = packet[12:12+fragment_length_int]
+
+    return verify_data
+
+
+
+
+
+
+
 
 
 
