@@ -1,6 +1,7 @@
 import struct
 import hmac
 import hashlib
+import random
 
 
 from ECDH_class import ECDH
@@ -694,14 +695,12 @@ def certificate_parsing(packet):
 
 
 #need to finish here the else logic
-def check_if_full_packet(packet_lst):
-
-    if len(packet_lst) == 1:
-        return True,None
-    else:
-        return False,packet_lst
-
-
+# def check_if_full_packet(packet_lst):
+#
+#     if len(packet_lst) == 1:
+#         return True,None
+#     else:
+#         return False,packet_lst
 
 
 def remove_header(packet):
@@ -865,20 +864,10 @@ def handshake_finish_parsing(packet):
 
 
 
-
-
-
-
-
-
-
-
-
-
 if __name__ == "__main__":
-    # random_num = random.randbytes(32)
-    # print(random_num)
-    # b,c = client_hello(0,random_num,0)
+    random_num = random.randbytes(32)
+    print(random_num)
+    b,c = client_hello(0,random_num,0)
     # # server_hello(0,random.randbytes(32),b"\x13\x01",0)
     # y,z = client_hello(0,random_num,0)
     # client_hello_parsing(z[0])

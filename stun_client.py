@@ -1,10 +1,9 @@
 import struct
 import socket
 import os
-from constant import SERVER_A,SERVER_B
+from constant import SERVER_A,SERVER_B,STUN_MAGIC_COOKIE
 
 
-STUN_MAGIC_COOKIE = 0x2112A442
 STUN_METHOD = {'STUN_METHOD_BINDING':0x000001}
 STUN_MSG_LENGTH = 0x0000
 transaction_id = 0
@@ -16,10 +15,12 @@ def generate_transaction_id():
     return generate_transaction_id_random
 
 
-def stun_request():
-    global transaction_id
-    client_socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 
+
+def stun_request(client_socket):
+    global transaction_id
+
+    print(client_socket)
     print("Sending binding request to stun server")
 
     transaction_id = generate_transaction_id()
@@ -80,19 +81,19 @@ def stun_request():
 
     if msg_type_b != b"\x01\x01":
         print("Error in msg_type_b")
-        return None,None,None,client_socket
+        return None,None,None
     print("Good msg_type_b")
 
     if transaction_id_check_b != transaction_id_b:
         print("Error in transaction_id_check")
-        return None,None,None,client_socket
+        return None,None,None
 
     if port_external_b != port_external_a:
         print("You have a symmetric NAT")
-        return ip_external_final, port_external_a, False,client_socket
+        return ip_external_final, port_external_a, False
 
     print("You have a full cone NAT ")
-    return ip_external_final,port_external_a,True,client_socket
+    return ip_external_final,port_external_a,True
 
 
 

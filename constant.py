@@ -36,3 +36,9 @@ PATH_STORE_PUBLIC_KEY = "C:\\School_11_Grade\\WebRTC\\key_public.pem"
 PATH_TO_STORE_CERTIFICATE = "C:\\School_11_Grade\\WebRTC\\certificate.pem"
 
 DELIMITER_BYTES = b"|"
+
+TURN_IP = "192.168.1.119"
+TURN_IP_CLIENT = "80.178.219.125"
+TURN_PORT = 3478
+
+STUN_MAGIC_COOKIE = 0x2112A442

@@ -3,17 +3,18 @@ import threading
 import time
 import random
 import hashlib
+import asyncio
 
 from stun_client import stun_request,keep_alive_udp_socket
 from tcp_by_size import recvSend
 from constant import SIGNALING_SERVER_IP_MAIN_SERVER,DH_START,DH_MSG,ROOM_REQUEST,DELIMITER,IP_PORT_EXT_MSG,SIGNALING_SERVER_PORT,SIGNALING_SERVER_IP_MAIN_CLIENT,CERTIFICATE_TYPE,CERT_VERIFY_TYPE
-from constant import HANDSHAKE_MSG_SERVER_HELLO,HANDSHAKE_MSG_CLIENT_HELLO,HANDSHAKE_MSG_ENCRYPTED_EXTENSIONS,HEADER_INFO_INT,HANDSHAKE_TYPE,ENCRYPTED_EXTENSIONS_TYPE,DELIMITER_BYTES
-from constant import FINISHED_TYPE
+from constant import HANDSHAKE_MSG_SERVER_HELLO,HANDSHAKE_MSG_CLIENT_HELLO,HANDSHAKE_MSG_ENCRYPTED_EXTENSIONS,HEADER_INFO_INT,HANDSHAKE_TYPE,ENCRYPTED_EXTENSIONS_TYPE,DELIMITER_BYTES,TURN_PORT,TURN_IP
+from constant import FINISHED_TYPE,TURN_IP_CLIENT
 from DH_class import DH
 from hole_punching import connect_to_peer
 from dtls import (client_hello, client_hello_parsing, server_hello, server_hello_parsing, full_record_recv,
     hmac_sha256, extract_signature_cert_verify, encrypted_extensions_type, server_encrypted_extensions,
-    handshake_finish_parsing, certificate_parsing, remove_header, check_if_full_packet,
+    handshake_finish_parsing, certificate_parsing, remove_header,
     certificate_verify,handshake_finished)
 from dtls import message_splitting,add_header_to_server_encrypted_packets,unit_records,server_encrypted_extensions_parsing,certificate,select_signature_algorithms
 from dtls_secure_session import DTLS13_SecureSession
@@ -21,7 +22,7 @@ from build_certificate import BuildCertificate
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
-
+from turn_msg import build_allocate_msg,parsing_allocate_error_response
 
 
 
@@ -29,7 +30,9 @@ class Main:
         stop_keep_alive = False
 
         def __init__(self,var):
-            self.ip,self.port,self.is_full_cone_nat,self.udp_socket = stun_request()
+            self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+            self.ip,self.port,self.is_full_cone_nat = None,None,None
             self.recv_send_crypt = None
             self.stop_keep_alive = False
             self.signaling_server_ip = var
@@ -96,6 +99,21 @@ class Main:
                 "client_finished":False
             }
             self.disconnect = False
+            self.ice_candidates = []
+
+            hostname = socket.gethostname()
+            ip_addr = socket.gethostbyname(hostname)
+
+            if var:
+                self.local_address = (ip_addr,7777)
+            else:
+                self.local_address = (ip_addr,6666)
+
+            if var:
+                self.turn_ip = TURN_IP
+            else:
+                self.turn_ip = TURN_IP_CLIENT
+
 
 
         def supported_groups_logic(self,supported_groups_lst):
@@ -1130,7 +1148,42 @@ class Main:
 
         def main(self):
             print("---------------------------------")
+
+            self.udp_socket.bind(self.local_address)
+            self.ice_candidates.insert(0,self.local_address)
+
+
+            self.ip,self.port,self.is_full_cone_nat = stun_request(self.udp_socket)
             print("ip : ", self.ip ," port : ",self.port," is_full_cone_nat :",self.is_full_cone_nat)
+
+            if self.is_full_cone_nat:
+                self.ice_candidates.insert(1,(self.ip,self.port))
+
+            allocate_packet,transaction_id = build_allocate_msg()
+            self.udp_socket.sendto(allocate_packet,(self.turn_ip,TURN_PORT))
+            self.udp_socket.settimeout(1)
+
+            counter = 0
+            while True:
+
+                if counter >= 3:
+                    break
+
+                try:
+                    packet,addr = self.udp_socket.recvfrom(1024)
+
+                    if not packet:
+                        break
+
+                    else:
+                        realm_server,nonce_server,expected_reason_phrase = parsing_allocate_error_response(packet,transaction_id)
+
+                except TimeoutError:
+                    counter += 1
+                    continue
+
+
+
 
             t = threading.Thread(target=self.keep_alive,args = (self.udp_socket,))
             t.start()
