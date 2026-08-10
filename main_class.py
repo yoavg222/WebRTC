@@ -3,13 +3,12 @@ import threading
 import time
 import random
 import hashlib
-import asyncio
 
 from stun_client import stun_request,keep_alive_udp_socket
 from tcp_by_size import recvSend
 from constant import SIGNALING_SERVER_IP_MAIN_SERVER,DH_START,DH_MSG,ROOM_REQUEST,DELIMITER,IP_PORT_EXT_MSG,SIGNALING_SERVER_PORT,SIGNALING_SERVER_IP_MAIN_CLIENT,CERTIFICATE_TYPE,CERT_VERIFY_TYPE
 from constant import HANDSHAKE_MSG_SERVER_HELLO,HANDSHAKE_MSG_CLIENT_HELLO,HANDSHAKE_MSG_ENCRYPTED_EXTENSIONS,HEADER_INFO_INT,HANDSHAKE_TYPE,ENCRYPTED_EXTENSIONS_TYPE,DELIMITER_BYTES,TURN_PORT,TURN_IP
-from constant import FINISHED_TYPE,TURN_IP_CLIENT
+from constant import FINISHED_TYPE,TURN_IP_CLIENT,ALLOCATE_TYPE
 from DH_class import DH
 from hole_punching import connect_to_peer
 from dtls import (client_hello, client_hello_parsing, server_hello, server_hello_parsing, full_record_recv,
@@ -22,7 +21,7 @@ from build_certificate import BuildCertificate
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
-from turn_msg import build_allocate_msg,parsing_allocate_error_response
+from turn_msg import build_allocate_msg,parsing_allocate_error_response,build_second_allocate_request,parsing_allocate_msg
 
 
 
@@ -30,7 +29,9 @@ class Main:
         stop_keep_alive = False
 
         def __init__(self,var):
-            self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.udp_socket = None
+            self.udp_socket_hole_punching = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.udp_socket_turn = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 
             self.ip,self.port,self.is_full_cone_nat = None,None,None
             self.recv_send_crypt = None
@@ -114,6 +115,8 @@ class Main:
             else:
                 self.turn_ip = TURN_IP_CLIENT
 
+            self.udp_socket_local_addr = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+
 
 
         def supported_groups_logic(self,supported_groups_lst):
@@ -141,13 +144,19 @@ class Main:
 
 
 
+        def refresh_msg(self):
+            pass
+
+
+
+
         def hole_punching_func(self):
             print("start hole punching with:",self.other_ip, " , ",self.other_port)
 
             self.stop_keep_alive = True
 
             remote_peer_tuple = (self.other_ip,self.other_port)
-            connect_to_peer(self.udp_socket,remote_peer_tuple,self.signaling_server_ip)
+            connect_to_peer(self.udp_socket_hole_punching,remote_peer_tuple,self.signaling_server_ip)
 
 
 
@@ -1128,12 +1137,15 @@ class Main:
             room_request = ROOM_REQUEST +room_client
             self.recv_send_crypt.send_with_size(room_request)
 
+            addr_to_send_lst = []
+            for addr in self.ice_candidates:
+                port_bytes = addr[1].to_bytes(2,byteorder = "big")
+                ip_bytes = addr[0].encode()
 
-            port_bytes = self.port.to_bytes(2,byteorder="big")
+                addr_to_send_lst.append((port_bytes,ip_bytes))
 
-            to_send_ip_port_ext = IP_PORT_EXT_MSG.encode() + DELIMITER_BYTES + self.ip.encode() + DELIMITER_BYTES + port_bytes + DELIMITER_BYTES + self.fingerprint_algorithm.encode() + DELIMITER_BYTES + self.fingerprints
+            to_send_ip_port_ext = IP_PORT_EXT_MSG.encode() + DELIMITER_BYTES + addr_to_send_lst[0][0] + DELIMITER_BYTES + addr_to_send_lst[0][1] + DELIMITER_BYTES +addr_to_send_lst[1][0] + DELIMITER_BYTES + addr_to_send_lst[1][1] + DELIMITER_BYTES +addr_to_send_lst[2][0] + DELIMITER_BYTES + addr_to_send_lst[2][1] + DELIMITER_BYTES + self.fingerprint_algorithm.encode() + DELIMITER_BYTES + self.fingerprints
             self.recv_send_crypt.send_with_size(to_send_ip_port_ext)
-
 
 
         def create_client_socket_recv_send(self):
@@ -1149,20 +1161,23 @@ class Main:
         def main(self):
             print("---------------------------------")
 
-            self.udp_socket.bind(self.local_address)
-            self.ice_candidates.insert(0,self.local_address)
+            self.udp_socket_local_addr.bind(self.local_address)
+            self.ice_candidates.insert(0,self.local_address,)
 
 
-            self.ip,self.port,self.is_full_cone_nat = stun_request(self.udp_socket)
+            self.ip,self.port,self.is_full_cone_nat = stun_request(self.udp_socket_hole_punching)
             print("ip : ", self.ip ," port : ",self.port," is_full_cone_nat :",self.is_full_cone_nat)
 
             if self.is_full_cone_nat:
                 self.ice_candidates.insert(1,(self.ip,self.port))
 
-            allocate_packet,transaction_id = build_allocate_msg()
-            self.udp_socket.sendto(allocate_packet,(self.turn_ip,TURN_PORT))
-            self.udp_socket.settimeout(1)
+            allocate_packet,transaction_id = build_allocate_msg(True)
+            self.udp_socket_turn.sendto(allocate_packet,(self.turn_ip,TURN_PORT))
+            self.udp_socket_turn.settimeout(3.5)
 
+            expected_reason_phrase = False
+            nonce_server = None
+            addr = None
             counter = 0
             while True:
 
@@ -1170,22 +1185,67 @@ class Main:
                     break
 
                 try:
-                    packet,addr = self.udp_socket.recvfrom(1024)
+                    packet,addr = self.udp_socket_turn.recvfrom(1024)
 
                     if not packet:
                         break
 
                     else:
-                        realm_server,nonce_server,expected_reason_phrase = parsing_allocate_error_response(packet,transaction_id)
+                        realm_server,nonce_server,expected_reason_phrase,transaction_id_server = parsing_allocate_error_response(packet,transaction_id)
+
+                        if expected_reason_phrase and transaction_id == transaction_id_server:
+                            break
+
 
                 except TimeoutError:
                     counter += 1
-                    continue
+                    allocate_packet, transaction_id = build_allocate_msg(True)
+                    self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
+
+
+
+            continue_turn = False
+            if expected_reason_phrase:
+                continue_turn = True
+            else:
+                print("false continue_turn")
+                pass
+
+            counter = 0
+            if continue_turn:
+                allocate_packet,transaction_id = build_second_allocate_request(nonce_server)
+                self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
+
+                while True:
+                    if counter >= 3:
+                        break
+
+                    try:
+                        packet, addr = self.udp_socket_turn.recvfrom(1024)
+                        if not packet:
+                            break
+
+                        else:
+                            packet_type = packet[:2]
+                            if packet_type == ALLOCATE_TYPE:
+                                transaction_id,lifetime,good_protocol,username,realm,nonce,message_integrity,addr = parsing_allocate_msg(packet)
+
+                                if addr is not None:
+                                    break
+
+                    except TimeoutError:
+                        counter += 1
+                        allocate_packet, transaction_id = build_second_allocate_request(nonce_server)
+                        self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
 
 
 
 
-            t = threading.Thread(target=self.keep_alive,args = (self.udp_socket,))
+            addr_append = (TURN_IP,addr[1])
+            self.ice_candidates.insert(2,addr_append)
+            print("addr: ",addr_append)
+
+            t = threading.Thread(target=self.keep_alive,args = (self.udp_socket_hole_punching,))
             t.start()
 
             self.recv_send.send_with_size(DH_START)
@@ -1201,14 +1261,39 @@ class Main:
             self.recv_send_crypt = recvSend(self.client_socket,key)
             self.find_room()
 
-            data = self.recv_send_crypt.recv_by_size()
-            data_lst = data.split(DELIMITER_BYTES)
+            port_ip_ex = self.recv_send_crypt.recv_by_size()
 
-            self.other_sha_algorithm = data_lst[3].decode()
-            self.other_fingerprints = data_lst[4]
+            port_ip_ex_lst = port_ip_ex.split(DELIMITER_BYTES)
+            print(port_ip_ex_lst)
 
-            self.other_ip = data_lst[2].decode()
-            self.other_port = int.from_bytes(data_lst[1],byteorder="big")
+            type_msg = port_ip_ex_lst[0]
+            port_ip_ex_lst.remove(type_msg)
+
+            port1 = int.from_bytes(port_ip_ex_lst[0], byteorder="big")
+            port2 = int.from_bytes(port_ip_ex_lst[2], byteorder="big")
+            port3 = int.from_bytes(port_ip_ex_lst[4], byteorder="big")
+
+            ip1 = port_ip_ex_lst[1].decode()
+            ip2 = port_ip_ex_lst[3].decode()
+            ip3 = port_ip_ex_lst[5].decode()
+
+            fingerprint_algorithm = port_ip_ex_lst[6].decode()
+            fingerprint= port_ip_ex_lst[7]
+
+
+            print("port1: ",port1," port2: ",port2," port3: ",port3)
+            print("ip1: ",ip1," ip2: ",ip2," ip3: ",ip3)
+            print("fingerprint_algorithm: ",fingerprint_algorithm," fingerprint: ",fingerprint)
+
+            lst_ice_other = [(ip1,port1),(ip2,port2),(ip3,port3)]
+            print(lst_ice_other)
+            print(self.ice_candidates)
+
+
+            self.other_fingerprints = fingerprint
+            self.other_sha_algorithm = fingerprint_algorithm
+
+
 
             self.hole_punching_func()
 

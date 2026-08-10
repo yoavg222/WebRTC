@@ -23,12 +23,11 @@ def find_two_to_room(recv_send_crypt):
 
     port_ip_ex = recv_send_crypt.recv_by_size()
     port_ip_ex_lst = port_ip_ex.split(DELIMITER_BYTES)
-    print(port_ip_ex_lst)
 
-    ip_ex = port_ip_ex_lst[1]
-    port_ex = int.from_bytes(port_ip_ex_lst[2],byteorder="big")
-    hash_algorithm = port_ip_ex_lst[3]
-    fingerprints_value = port_ip_ex_lst[4]
+    type_msg = port_ip_ex_lst[0]
+
+    if type_msg != b"IPE":
+        return
 
     while True:
 
@@ -52,17 +51,14 @@ def find_two_to_room(recv_send_crypt):
 
     sock_to_send = recv_send_crypt
 
-    i = 0
+
     for i in range(2):
         sock_lst = room_users_dic[data_lst[1]]
         if sock_lst[i] != recv_send_crypt:
             sock_to_send = sock_lst[i]
         i+=1
 
-    port_ex_bytes = port_ex.to_bytes(2,byteorder="big")
-
-    to_send = IP_PORT_EXT_MSG.encode() + DELIMITER_BYTES + port_ex_bytes + DELIMITER_BYTES + ip_ex + DELIMITER_BYTES + hash_algorithm + DELIMITER_BYTES + fingerprints_value
-    sock_to_send.send_with_size(to_send)
+    sock_to_send.send_with_size(port_ip_ex)
 
 
 

@@ -1,21 +1,13 @@
 import struct
 import os
+import hmac
+import hashlib
+import socket
+from msilib import datasizemask
 
 from stun_client import generate_transaction_id
-from constant import STUN_MAGIC_COOKIE
+from constant import STUN_MAGIC_COOKIE,SERVER_LIFETIME,ALLOCATE_TYPE,XOR_RELAYED_ADDRESS_TYPE,FAMILY_IPV4,MESSAGE_INTEGRITY_TYPE,XOR_RELAYED_ADDRESS_START,SERVER_USERNAME,SERVER_PASSWORD,CLIENT_PASSWORD,CLIENT_USERNAME,USERNAME_TYPE,ALLOCATE_REQUEST_TYPE, ERROR_RESPONSE_TYPE, ERROR_CODE, REQUESTED_TRANSPORT_TYPE, LIFETIME_TYPE, UDP_PROTOCOL, RFFU, REASON_PHRASE, LIFETIME_HOUR, REALM, REALM_TYPE, NONCE_TYPE
 
-allocate_request_type = b"\x00\x03"
-error_response_type = b"\x00\x09"
-error_code = b"\x00\x00\x04\x01"
-requested_transport_type = b"\x00\x19"
-lifetime_type = b"\x00\x0d"
-udp_protocol = b"\x11"
-rffu = b"\x00\x00\x00"
-reason_phrase = "Unauthorized".encode()
-lifetime_hour = 3600
-realm = "MyTurn.com".encode()
-realm_type = b"\x00\x14"
-nonce_type = b"\x00\x15"
 
 
 def build_channel_data():
@@ -41,6 +33,20 @@ def padding(input_var):
 
 
 
+def build_basic_response_error(nonce):
+
+    realm_packet = padding(REALM)
+    realm_packet_len = len(realm_packet).to_bytes(2,byteorder="big")
+    realm_packet = REALM_TYPE + realm_packet_len + realm_packet
+
+    len_nonce = len(nonce).to_bytes(2,byteorder="big")
+
+    nonce_packet = NONCE_TYPE + len_nonce + nonce
+
+    return nonce_packet,realm_packet
+
+
+
 def build_allocate_response_error(transaction_id):
 
     magic_cookie = STUN_MAGIC_COOKIE
@@ -49,32 +55,26 @@ def build_allocate_response_error(transaction_id):
     magic_cookie_pack = struct.pack("!I",magic_cookie)
 
 
-    error_code_pack = error_code + padding(reason_phrase)
+    error_code_pack = ERROR_CODE + padding(REASON_PHRASE)
     error_code_pack_len = len(error_code_pack).to_bytes(2,byteorder="big")
-    error_code_pack = error_response_type + error_code_pack_len + error_code_pack
+    error_code_pack = ERROR_RESPONSE_TYPE + error_code_pack_len + error_code_pack
 
-    realm_packet = padding(realm)
-    realm_packet_len = len(realm_packet).to_bytes(2,byteorder="big")
-    realm_packet = realm_type + realm_packet_len + realm_packet
 
     nonce = os.urandom(32)
-    print("nonce: ",nonce)
 
+    nonce_packet,realm_packet = build_basic_response_error(nonce)
 
-    len_nonce = len(nonce).to_bytes(2,byteorder="big")
-
-    nonce_packet = nonce_type + len_nonce + nonce
 
     len_header = len(error_code_pack + realm_packet + nonce_packet).to_bytes(2,byteorder="big")
-    packet = error_response_type + len_header + magic_cookie_pack + transaction_id_pack + error_code_pack + realm_packet + nonce_packet
+    packet = ERROR_RESPONSE_TYPE + len_header + magic_cookie_pack + transaction_id_pack + error_code_pack + realm_packet + nonce_packet
 
     return packet,nonce
 
 
 
-def build_allocate_msg():
 
 
+def build_basic_allocate():
     transaction_id = generate_transaction_id()
     print("build_allocate_msg transaction_id: ",transaction_id)
 
@@ -83,31 +83,93 @@ def build_allocate_msg():
     transaction_id_pack = struct.pack("!12s",transaction_id)
     magic_cookie_pack = struct.pack("!I",magic_cookie)
 
-    requested_transport = udp_protocol + rffu
+    requested_transport = UDP_PROTOCOL + RFFU
     requested_transport_length = len(requested_transport)
     requested_transport_length_bytes = requested_transport_length.to_bytes(2,byteorder="big")
-    requested_transport = requested_transport_type + requested_transport_length_bytes + requested_transport
+    requested_transport = REQUESTED_TRANSPORT_TYPE + requested_transport_length_bytes + requested_transport
 
     print("requested_transport: ",requested_transport.hex())
 
-    lifetime = lifetime_hour.to_bytes(4,byteorder="big")
+    lifetime = LIFETIME_HOUR.to_bytes(4,byteorder="big")
     lifetime_len = len(lifetime).to_bytes(2,byteorder="big")
-    lifetime = lifetime_type + lifetime_len + lifetime
+    lifetime = LIFETIME_TYPE + lifetime_len + lifetime
 
     print("lifetime: ",lifetime.hex())
 
 
 
-    allocate_packet = magic_cookie_pack + transaction_id_pack + lifetime + requested_transport
 
-    length_msg = len(lifetime + requested_transport)
-    length_bytes = length_msg.to_bytes(2,byteorder = "big")
 
-    allocate_packet = length_bytes + allocate_packet
 
-    allocate_packet = allocate_request_type + allocate_packet
+    return transaction_id,magic_cookie_pack,transaction_id_pack,lifetime,requested_transport
+
+
+
+def build_allocate_msg(var):
+
+
+    transaction_id, magic_cookie_pack, transaction_id_pack, lifetime, requested_transport  = build_basic_allocate()
+
+
+    allocate_packet = magic_cookie_pack + transaction_id_pack
+
+    if var:
+
+        length_msg = len(lifetime + requested_transport)
+        length_bytes = length_msg.to_bytes(2,byteorder = "big")
+
+        allocate_packet = length_bytes + allocate_packet
+
+        allocate_packet = ALLOCATE_REQUEST_TYPE + allocate_packet
+
+        return allocate_packet,transaction_id
+
+    else:
+        return allocate_packet,transaction_id,lifetime,requested_transport
+
+
+
+def hmac_sha1(realm,user_name,password):
+
+    if type(realm) != str:
+        realm = realm.decode()
+
+    msg = (realm + user_name + password).encode()
+    key = hashlib.md5(msg).digest()
+
+    return hmac.new(key,msg,hashlib.sha1).digest()
+
+
+
+def build_second_allocate_request(nonce):
+
+    allocate_packet,transaction_id,lifetime,requested_transport = build_allocate_msg(False)
+
+    nonce_packet,realm_packet = build_basic_response_error(nonce)
+
+    first_user_name = SERVER_USERNAME
+    user_name = first_user_name.encode()
+    user_name = padding(user_name)
+    len_user_name = len(user_name).to_bytes(2,byteorder="big")
+    user_name_packet = USERNAME_TYPE + len_user_name + user_name
+
+    if first_user_name == SERVER_USERNAME:
+        password = SERVER_PASSWORD
+    else:
+        password = CLIENT_PASSWORD
+
+    message_integrity = hmac_sha1(REALM, first_user_name, password)
+    message_integrity_len = len(message_integrity).to_bytes(2, byteorder="big")
+    message_integrity_packet = MESSAGE_INTEGRITY_TYPE + message_integrity_len + message_integrity
+
+    len_packet = len(
+        user_name_packet + message_integrity_packet + realm_packet + nonce_packet + lifetime + requested_transport).to_bytes(
+        2, byteorder="big")
+
+    allocate_packet = ALLOCATE_REQUEST_TYPE + len_packet  + allocate_packet + lifetime + requested_transport + user_name_packet + realm_packet + nonce_packet + message_integrity_packet
 
     return allocate_packet,transaction_id
+
 
 
 
@@ -115,7 +177,11 @@ def parsing_allocate_msg(packet):
 
     lifetime = None
     good_protocol = False
-    has_username = False
+    has_username = ""
+    realm = None
+    nonce = None
+    message_integrity_client = None
+    addr_allocate = None
 
     print("parsing_allocate_msg: ",packet)
 
@@ -130,18 +196,15 @@ def parsing_allocate_msg(packet):
 
         type_data = data[:2]
 
-        if type_data == lifetime_type:
+        if type_data == LIFETIME_TYPE:
 
             lifetime = data[4:8]
             lifetime_int = int.from_bytes(lifetime,byteorder="big")
-
-            print("lifetime_int: ",lifetime_int)
             lifetime = lifetime_int
 
-            print(data)
             data = data[8:]
 
-        elif type_data == requested_transport_type:
+        elif type_data == REQUESTED_TRANSPORT_TYPE:
 
             requested_transport_protocol = data[4]
 
@@ -151,8 +214,79 @@ def parsing_allocate_msg(packet):
             data = data[8:]
 
 
+        elif type_data == USERNAME_TYPE:
+            user_name_len = data[2:4]
+            user_name_len_int = int.from_bytes(user_name_len,byteorder="big")
+            has_username = data[4:4 + user_name_len_int]
+            has_username = has_username.split(b"\x00",1)[0]
 
-    return transaction_id,lifetime,good_protocol,has_username
+            print("has_username: ",has_username)
+
+            data = data[4+ user_name_len_int:]
+
+
+        elif type_data == REALM_TYPE:
+
+            realm_len = data[2:4]
+            realm_len_int = int.from_bytes(realm_len, byteorder="big")
+            realm_server_not_final = data[4:4 + realm_len_int]
+            realm_server_lst = realm_server_not_final.split(b"\x00", 1)
+
+            realm = realm_server_lst[0]
+
+            data = data[4 + realm_len_int:]
+
+        elif type_data == NONCE_TYPE:
+
+            nonce_len = data[2:4]
+            nonce_len_int = int.from_bytes(nonce_len, byteorder="big")
+            nonce = data[4:4 + nonce_len_int]
+
+            data = data[4 + nonce_len_int:]
+
+
+        elif type_data == MESSAGE_INTEGRITY_TYPE:
+
+            message_integrity_len = data[2:4]
+            message_integrity_len_int = int.from_bytes(message_integrity_len,byteorder="big")
+
+            message_integrity_client = data[4:4+message_integrity_len_int]
+
+            data = data[4+message_integrity_len_int:]
+
+
+        elif type_data == XOR_RELAYED_ADDRESS_TYPE:
+            print("data: ",data)
+            xor_relayed_address_len = data[2:4]
+            xor_relayed_address_len_int = int.from_bytes(xor_relayed_address_len,byteorder="big")
+
+            xor_relayed_address_data = data[4:4+xor_relayed_address_len_int]
+
+            family = xor_relayed_address_data[:2]
+            print("packet_xor_relayed_address: ",family)
+
+            if family == b"\x00\x01":
+                port_xor = struct.unpack(">H",xor_relayed_address_data[2:4])[0]
+
+                cookie = STUN_MAGIC_COOKIE.to_bytes(4, byteorder="little")
+                cookie_to_xor = cookie[:2]
+                port = port_xor ^ int.from_bytes(cookie_to_xor,byteorder="little")
+
+                ip_xor = struct.unpack(">I",xor_relayed_address_data[4:8])[0]
+                cookie = STUN_MAGIC_COOKIE.to_bytes(4, byteorder="little")
+
+                cookie_int = int.from_bytes(cookie,byteorder="little")
+
+                ip_xor = (cookie_int ^ ip_xor).to_bytes(4,byteorder="little")
+
+                ip = '.'.join(str(c) for c in ip_xor)
+
+                addr_allocate = (ip,port)
+
+                data = data[4+xor_relayed_address_len_int:]
+
+
+    return transaction_id,lifetime,good_protocol,has_username,realm,nonce,message_integrity_client,addr_allocate
 
 
 
@@ -162,7 +296,7 @@ def parsing_allocate_error_response(packet,transaction_id_input):
     print("parsing_allocate_msg transaction_id: ",transaction_id)
 
     if transaction_id != transaction_id_input:
-        return None,None,None
+        return None,None,None,None
 
 
     realm_server = None
@@ -176,21 +310,21 @@ def parsing_allocate_error_response(packet,transaction_id_input):
 
         type_data = data[:2]
 
-        if type_data == error_response_type:
+        if type_data == ERROR_RESPONSE_TYPE:
             header = struct.unpack(">I",data[4:8])[0]
             header = header.to_bytes(4)
 
-            if header == error_code:
+            if header == ERROR_CODE:
                 reason_phrase_server = data[8:24]
                 lst = reason_phrase_server.split(b"\x00",1)
 
-                if lst[0] == reason_phrase:
+                if lst[0] == REASON_PHRASE:
                     print("good reason_phrase")
                     expected_reason_phrase = True
 
                     data = data[24:]
 
-        elif type_data == realm_type:
+        elif type_data == REALM_TYPE:
 
             realm_len = data[2:4]
             realm_len_int = int.from_bytes(realm_len,byteorder="big")
@@ -203,7 +337,7 @@ def parsing_allocate_error_response(packet,transaction_id_input):
             data = data[4+realm_len_int:]
 
 
-        elif type_data == nonce_type:
+        elif type_data == NONCE_TYPE:
 
             nonce_len = data[2:4]
             nonce_len_int = int.from_bytes(nonce_len,byteorder="big")
@@ -216,4 +350,49 @@ def parsing_allocate_error_response(packet,transaction_id_input):
             data = data[4 + nonce_len_int:]
 
 
-    return realm_server,nonce_server,expected_reason_phrase
+    return realm_server,nonce_server,expected_reason_phrase,transaction_id
+
+
+
+
+
+
+
+def build_allocate_request_success(transaction_id,message_integrity_input,allocate_addr):
+
+    packet_xor_relayed_address = XOR_RELAYED_ADDRESS_START + FAMILY_IPV4
+
+    port = allocate_addr[1]
+    cookie = STUN_MAGIC_COOKIE.to_bytes(4,byteorder="little")
+
+    cookie_to_xor = cookie[:2]
+
+    port_xor = int.from_bytes(cookie_to_xor,byteorder="little") ^ port
+    port_xor_final = struct.pack("!H",port_xor)
+
+    ip_bytes = socket.inet_aton(allocate_addr[0])
+    ip_bytes_xor = int.from_bytes(cookie,byteorder="little") ^ int.from_bytes(ip_bytes,byteorder="little")
+    ip_xor_final = struct.pack("!I",ip_bytes_xor)
+
+    packet_xor_relayed_address = packet_xor_relayed_address + port_xor_final + ip_xor_final
+
+    packet_xor_relayed_address_len = len(packet_xor_relayed_address).to_bytes(2,byteorder="big")
+    packet_xor_relayed_address = XOR_RELAYED_ADDRESS_TYPE + packet_xor_relayed_address_len + packet_xor_relayed_address
+
+    print("packet_xor_relayed_address: ",packet_xor_relayed_address)
+
+
+    message_integrity = hmac_sha1(REALM, message_integrity_input[0], message_integrity_input[1])
+    message_integrity_len = len(message_integrity).to_bytes(2, byteorder="big")
+    message_integrity_packet = MESSAGE_INTEGRITY_TYPE + message_integrity_len + message_integrity
+
+
+    lifetime = SERVER_LIFETIME.to_bytes(4,byteorder="big")
+    lifetime_len = len(lifetime).to_bytes(2,byteorder="big")
+    lifetime = LIFETIME_TYPE + lifetime_len + lifetime
+
+
+
+    packet_len = len(lifetime + message_integrity_packet + packet_xor_relayed_address).to_bytes(2,byteorder="big")
+    packet = ALLOCATE_TYPE + packet_len + struct.pack("!I",STUN_MAGIC_COOKIE) + transaction_id + lifetime + message_integrity_packet + packet_xor_relayed_address
+    return packet
