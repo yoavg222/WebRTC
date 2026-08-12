@@ -1,3 +1,4 @@
+import asyncio
 import socket
 import threading
 import time
@@ -22,6 +23,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from turn_msg import build_allocate_msg,parsing_allocate_error_response,build_second_allocate_request,parsing_allocate_msg
+from ice import main_ice
 
 
 
@@ -1156,146 +1158,157 @@ class Main:
             return recv_send,client_socket
 
 
+        async def start_async_ice(self):
+            main_task = asyncio.create_task(main_ice())
+            await main_task
+
+
 
 
         def main(self):
             print("---------------------------------")
 
-            self.udp_socket_local_addr.bind(self.local_address)
-            self.ice_candidates.insert(0,self.local_address,)
+            asyncio.run(self.start_async_ice())
 
-
-            self.ip,self.port,self.is_full_cone_nat = stun_request(self.udp_socket_hole_punching)
-            print("ip : ", self.ip ," port : ",self.port," is_full_cone_nat :",self.is_full_cone_nat)
-
-            if self.is_full_cone_nat:
-                self.ice_candidates.insert(1,(self.ip,self.port))
-
-            allocate_packet,transaction_id = build_allocate_msg(True)
-            self.udp_socket_turn.sendto(allocate_packet,(self.turn_ip,TURN_PORT))
-            self.udp_socket_turn.settimeout(3.5)
-
-            expected_reason_phrase = False
-            nonce_server = None
-            addr = None
-            counter = 0
-            while True:
-
-                if counter >= 3:
-                    break
-
-                try:
-                    packet,addr = self.udp_socket_turn.recvfrom(1024)
-
-                    if not packet:
-                        break
-
-                    else:
-                        realm_server,nonce_server,expected_reason_phrase,transaction_id_server = parsing_allocate_error_response(packet,transaction_id)
-
-                        if expected_reason_phrase and transaction_id == transaction_id_server:
-                            break
-
-
-                except TimeoutError:
-                    counter += 1
-                    allocate_packet, transaction_id = build_allocate_msg(True)
-                    self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
-
-
-
-            continue_turn = False
-            if expected_reason_phrase:
-                continue_turn = True
-            else:
-                print("false continue_turn")
-                pass
-
-            counter = 0
-            if continue_turn:
-                allocate_packet,transaction_id = build_second_allocate_request(nonce_server)
-                self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
-
-                while True:
-                    if counter >= 3:
-                        break
-
-                    try:
-                        packet, addr = self.udp_socket_turn.recvfrom(1024)
-                        if not packet:
-                            break
-
-                        else:
-                            packet_type = packet[:2]
-                            if packet_type == ALLOCATE_TYPE:
-                                transaction_id,lifetime,good_protocol,username,realm,nonce,message_integrity,addr = parsing_allocate_msg(packet)
-
-                                if addr is not None:
-                                    break
-
-                    except TimeoutError:
-                        counter += 1
-                        allocate_packet, transaction_id = build_second_allocate_request(nonce_server)
-                        self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
-
-
-
-
-            addr_append = (TURN_IP,addr[1])
-            self.ice_candidates.insert(2,addr_append)
-            print("addr: ",addr_append)
-
-            t = threading.Thread(target=self.keep_alive,args = (self.udp_socket_hole_punching,))
-            t.start()
-
-            self.recv_send.send_with_size(DH_START)
-            from_server = self.recv_send.recv_by_size().decode()
-
-            if from_server != DH_MSG:
-                print("Error in from_server")
-
-            dh_client = DH()
-            key = dh_client.dhp_key_exchange_client(self.recv_send)
-            print("key from client: ",key)
-
-            self.recv_send_crypt = recvSend(self.client_socket,key)
-            self.find_room()
-
-            port_ip_ex = self.recv_send_crypt.recv_by_size()
-
-            port_ip_ex_lst = port_ip_ex.split(DELIMITER_BYTES)
-            print(port_ip_ex_lst)
-
-            type_msg = port_ip_ex_lst[0]
-            port_ip_ex_lst.remove(type_msg)
-
-            port1 = int.from_bytes(port_ip_ex_lst[0], byteorder="big")
-            port2 = int.from_bytes(port_ip_ex_lst[2], byteorder="big")
-            port3 = int.from_bytes(port_ip_ex_lst[4], byteorder="big")
-
-            ip1 = port_ip_ex_lst[1].decode()
-            ip2 = port_ip_ex_lst[3].decode()
-            ip3 = port_ip_ex_lst[5].decode()
-
-            fingerprint_algorithm = port_ip_ex_lst[6].decode()
-            fingerprint= port_ip_ex_lst[7]
-
-
-            print("port1: ",port1," port2: ",port2," port3: ",port3)
-            print("ip1: ",ip1," ip2: ",ip2," ip3: ",ip3)
-            print("fingerprint_algorithm: ",fingerprint_algorithm," fingerprint: ",fingerprint)
-
-            lst_ice_other = [(ip1,port1),(ip2,port2),(ip3,port3)]
-            print(lst_ice_other)
-            print(self.ice_candidates)
-
-
-            self.other_fingerprints = fingerprint
-            self.other_sha_algorithm = fingerprint_algorithm
-
-
-
-            self.hole_punching_func()
+            # self.udp_socket_local_addr.bind(self.local_address)
+            # self.ice_candidates.insert(0,self.local_address,)
+            #
+            #
+            # self.ip,self.port,self.is_full_cone_nat = stun_request(self.udp_socket_hole_punching)
+            # print("ip : ", self.ip ," port : ",self.port," is_full_cone_nat :",self.is_full_cone_nat)
+            #
+            # if self.is_full_cone_nat:
+            #     self.ice_candidates.insert(1,(self.ip,self.port))
+            #
+            # allocate_packet,transaction_id = build_allocate_msg(True)
+            # self.udp_socket_turn.sendto(allocate_packet,(self.turn_ip,TURN_PORT))
+            # self.udp_socket_turn.settimeout(3.5)
+            #
+            # expected_reason_phrase = False
+            # nonce_server = None
+            # addr = None
+            # counter = 0
+            # while True:
+            #
+            #     if counter >= 3:
+            #         break
+            #
+            #     try:
+            #         packet,addr = self.udp_socket_turn.recvfrom(1024)
+            #
+            #         if not packet:
+            #             break
+            #
+            #         else:
+            #             realm_server,nonce_server,expected_reason_phrase,transaction_id_server = parsing_allocate_error_response(packet,transaction_id)
+            #
+            #             if expected_reason_phrase and transaction_id == transaction_id_server:
+            #                 break
+            #
+            #
+            #     except TimeoutError:
+            #         counter += 1
+            #         allocate_packet, transaction_id = build_allocate_msg(True)
+            #         self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
+            #
+            #
+            #
+            # continue_turn = False
+            # if expected_reason_phrase:
+            #     continue_turn = True
+            # else:
+            #     print("false continue_turn")
+            #     pass
+            #
+            # counter = 0
+            # if continue_turn:
+            #     allocate_packet,transaction_id = build_second_allocate_request(nonce_server)
+            #     self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
+            #
+            #     while True:
+            #         if counter >= 3:
+            #             break
+            #
+            #         try:
+            #             packet, addr = self.udp_socket_turn.recvfrom(1024)
+            #             if not packet:
+            #                 break
+            #
+            #             else:
+            #                 packet_type = packet[:2]
+            #                 if packet_type == ALLOCATE_TYPE:
+            #                     transaction_id,lifetime,good_protocol,username,realm,nonce,message_integrity,addr = parsing_allocate_msg(packet)
+            #
+            #                     if addr is not None:
+            #                         break
+            #
+            #         except TimeoutError:
+            #             counter += 1
+            #             allocate_packet, transaction_id = build_second_allocate_request(nonce_server)
+            #             self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
+            #
+            #
+            #
+            #
+            # addr_append = (TURN_IP,addr[1])
+            # self.ice_candidates.insert(2,addr_append)
+            # print("addr: ",addr_append)
+            #
+            # t = threading.Thread(target=self.keep_alive,args = (self.udp_socket_hole_punching,))
+            # t.start()
+            #
+            # self.recv_send.send_with_size(DH_START)
+            # from_server = self.recv_send.recv_by_size().decode()
+            #
+            # if from_server != DH_MSG:
+            #     print("Error in from_server")
+            #
+            # dh_client = DH()
+            # key = dh_client.dhp_key_exchange_client(self.recv_send)
+            # print("key from client: ",key)
+            #
+            # self.recv_send_crypt = recvSend(self.client_socket,key)
+            # self.find_room()
+            #
+            # port_ip_ex = self.recv_send_crypt.recv_by_size()
+            #
+            # port_ip_ex_lst = port_ip_ex.split(DELIMITER_BYTES)
+            # print(port_ip_ex_lst)
+            #
+            # type_msg = port_ip_ex_lst[0]
+            # port_ip_ex_lst.remove(type_msg)
+            #
+            # port1 = int.from_bytes(port_ip_ex_lst[0], byteorder="big")
+            # port2 = int.from_bytes(port_ip_ex_lst[2], byteorder="big")
+            # port3 = int.from_bytes(port_ip_ex_lst[4], byteorder="big")
+            #
+            # ip1 = port_ip_ex_lst[1].decode()
+            # ip2 = port_ip_ex_lst[3].decode()
+            # ip3 = port_ip_ex_lst[5].decode()
+            #
+            # fingerprint_algorithm = port_ip_ex_lst[6].decode()
+            # fingerprint= port_ip_ex_lst[7]
+            #
+            #
+            # print("port1: ",port1," port2: ",port2," port3: ",port3)
+            # print("ip1: ",ip1," ip2: ",ip2," ip3: ",ip3)
+            # print("fingerprint_algorithm: ",fingerprint_algorithm," fingerprint: ",fingerprint)
+            #
+            #
+            # lst_ice_other = [(ip1,port1),(ip2,port2),(ip3,port3)]
+            # print(lst_ice_other)
+            # print(self.ice_candidates)
+            #
+            #
+            # self.other_fingerprints = fingerprint
+            # self.other_sha_algorithm = fingerprint_algorithm
+            #
+            # asyncio.run(self.async_ice(lst_ice_other))
+            #
+            #
+            #
+            #
+            # self.hole_punching_func()
 
             if self.signaling_server_ip == SIGNALING_SERVER_IP_MAIN_SERVER:
                 self.dtls_handshake_server()

@@ -44,14 +44,6 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         asyncio.create_task(self.handle_msgs(message,addr))
 
 
-    def check_dic_allocate(self):
-        global dic_allocate
-        global dic_to_refresh
-        global dic_nonce
-
-        pass
-
-
     def check_message_integrity(self,message_integrity,user_tuple):
 
         username = user_tuple[0]
@@ -78,21 +70,19 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         print("get allocate request from: ",addr)
 
 
-        transaction_id,lifetime,good_protocol,username,realm,nonce,message_integrity,addr_allocate = parsing_allocate_msg(data)
+        transaction_id, lifetime, good_protocol, has_username, realm, nonce, message_integrity_client, addr_allocate, expected_reason_phrase, is_error_response = parsing_allocate_msg(data)
         print("transaction_id: ",transaction_id," lifetime: ",lifetime," good_protocol: ",good_protocol)
 
 
-        if username == "":
+        if has_username == "":
             packet,nonce = build_allocate_response_error(transaction_id)
             dic_nonce[addr] = [nonce,time.time]
             dic_long_term_credentials[addr] = [nonce,True]
-
-
             self.transport.sendto(packet,addr)
 
         else:
             print("get second response")
-            print("transaction_id: ", transaction_id, " lifetime: ", lifetime, " good_protocol: ", good_protocol," username: ",username," realm: ",realm," nonce: ",nonce," message_integrity: ",message_integrity)
+            print("transaction_id: ", transaction_id, " lifetime: ", lifetime, " good_protocol: ", good_protocol," username: ",has_username," realm: ",realm," nonce: ",nonce," message_integrity: ",message_integrity_client)
 
             try:
                 if dic_long_term_credentials[addr][0] == nonce:
@@ -111,14 +101,14 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
                 try:
                     async with engine.connect() as conn:
                         statement = select(users_table).where(
-                            users_table.c.username == username.decode()
+                            users_table.c.username == has_username.decode()
                         )
 
                         result = await conn.execute(statement)
                         result = result.all()[0]
 
 
-                        check = self.check_message_integrity(message_integrity,result)
+                        check = self.check_message_integrity(message_integrity_client,result)
 
                         if check:
 

@@ -120,7 +120,7 @@ def build_allocate_msg(var):
 
         allocate_packet = length_bytes + allocate_packet
 
-        allocate_packet = ALLOCATE_REQUEST_TYPE + allocate_packet
+        allocate_packet = ALLOCATE_REQUEST_TYPE + allocate_packet + lifetime + requested_transport
 
         return allocate_packet,transaction_id
 
@@ -175,13 +175,16 @@ def build_second_allocate_request(nonce):
 
 def parsing_allocate_msg(packet):
 
-    lifetime = None
+
     good_protocol = False
+    is_error_response = False
     has_username = ""
     realm = None
     nonce = None
     message_integrity_client = None
     addr_allocate = None
+    expected_reason_phrase = None
+    lifetime = None
 
     print("parsing_allocate_msg: ",packet)
 
@@ -286,31 +289,7 @@ def parsing_allocate_msg(packet):
                 data = data[4+xor_relayed_address_len_int:]
 
 
-    return transaction_id,lifetime,good_protocol,has_username,realm,nonce,message_integrity_client,addr_allocate
-
-
-
-
-def parsing_allocate_error_response(packet,transaction_id_input):
-    transaction_id = struct.unpack(">12s",packet[8:20])[0]
-    print("parsing_allocate_msg transaction_id: ",transaction_id)
-
-    if transaction_id != transaction_id_input:
-        return None,None,None,None
-
-
-    realm_server = None
-    nonce_server = None
-    expected_reason_phrase = None
-
-
-    data = packet[20:]
-
-    while data:
-
-        type_data = data[:2]
-
-        if type_data == ERROR_RESPONSE_TYPE:
+        elif type_data == ERROR_RESPONSE_TYPE:
             header = struct.unpack(">I",data[4:8])[0]
             header = header.to_bytes(4)
 
@@ -322,38 +301,11 @@ def parsing_allocate_error_response(packet,transaction_id_input):
                     print("good reason_phrase")
                     expected_reason_phrase = True
 
+                    is_error_response = True
                     data = data[24:]
 
-        elif type_data == REALM_TYPE:
 
-            realm_len = data[2:4]
-            realm_len_int = int.from_bytes(realm_len,byteorder="big")
-
-            realm_server_not_final = data[4:4+realm_len_int]
-            realm_server_lst = realm_server_not_final.split(b"\x00",1)
-
-            realm_server = realm_server_lst[0]
-
-            data = data[4+realm_len_int:]
-
-
-        elif type_data == NONCE_TYPE:
-
-            nonce_len = data[2:4]
-            nonce_len_int = int.from_bytes(nonce_len,byteorder="big")
-
-            nonce_server = data[4:4 + nonce_len_int]
-
-            print("nonce_server: ",nonce_server)
-
-
-            data = data[4 + nonce_len_int:]
-
-
-    return realm_server,nonce_server,expected_reason_phrase,transaction_id
-
-
-
+    return transaction_id,lifetime,good_protocol,has_username,realm,nonce,message_integrity_client,addr_allocate,expected_reason_phrase,is_error_response
 
 
 

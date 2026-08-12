@@ -4,7 +4,7 @@ import time
 from tcp_by_size import recvSend
 from DH_class import DH
 from constant import DH_START, IP_ADDRESS_ALLOWLISTING, DH_MSG, DELIMITER_BYTES
-from constant import IP_PORT_EXT_MSG,DELIMITER,SIGNALING_SERVER_PORT
+from constant import DELIMITER,SIGNALING_SERVER_PORT
 
 all_to_die = False
 room_users_dic = {}

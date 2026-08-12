@@ -1,6 +1,6 @@
 from jupyter_server.gateway.gateway_client import MESSAGE_KEY
 
-SERVER_A = ("stun.l.google.com", 19302)
+SERVER_A = ("stun2.l.google.com", 19302)
 SERVER_B = ("stun1.l.google.com", 19302)
 STUN_SERVER_PORT = 3478
 PARAMETERS_PATH = "parameters.pem"
