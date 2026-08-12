@@ -1,9 +1,13 @@
 import asyncio
 import socket
 
-from constant import IP_ADDRESS_ALLOWLISTING, SERVER_A, SERVER_B, TURN_IP, TURN_PORT
+from constant import IP_ADDRESS_ALLOWLISTING, SERVER_A, DH_MSG ,SERVER_B, TURN_IP,TURN_IP_CLIENT,DH_START,TURN_PORT,SIGNALING_SERVER_IP_MAIN_SERVER,SIGNALING_SERVER_IP_MAIN_CLIENT,SIGNALING_SERVER_PORT
 from stun_client import stun_request, stun_response_parsing
 from turn_msg import build_allocate_msg, build_second_allocate_request,parsing_allocate_msg
+from tcp_by_size import recvSend
+from DH_class import DH
+from signaling_func import create_client_socket_recv_send,find_room
+from constant import DELIMITER_BYTES
 
 
 get_error_response = False
@@ -19,10 +23,24 @@ found_local = False
 found_ext = False
 found_turn = False
 
+
+turn_ip = None
+signaling_server_ip = None
+fingerprints_algorithm = None
+fingerprint = None
+other_fingerprint_algorithm = None
+other_fingerprint = None
+
 transaction_dic = {"a": [], "b": [], "turn": []}
 
 msg_stun = []
 msg_turn = []
+lst_ice_other = []
+
+
+
+
+
 
 class EchoUDPProtocol(asyncio.DatagramProtocol):
 
@@ -44,14 +62,81 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         ice_candidates_lst.insert(0, local_addr)
         found_local = True
 
-        asyncio.create_task(self.collect_ice_candidates_send())
-        # asyncio.run(self.help_function())
+        asyncio.create_task(self.help_function())
+        print("here in asyncio.create_task")
+
+
+    async def help_function(self):
+        await asyncio.create_task(self.collect_ice_candidates_send())
+        signaling_server_connection_good = self.signaling_server_connection()
+
+        if signaling_server_connection_good:
+            pass
 
 
 
-    # async def help_function(self):
+
+    async def ice_frame_work(self):
+        pass
 
 
+
+    def signaling_server_connection(self):
+
+        global other_fingerprint_algorithm
+        global other_fingerprint
+        global lst_ice_other
+
+
+        recv_send,client_socket = create_client_socket_recv_send(signaling_server_ip)
+
+        recv_send.send_with_size(DH_START)
+        from_server = recv_send.recv_by_size().decode()
+
+        if from_server != DH_MSG:
+            print("Error in from_server")
+            return False
+
+        dh_client = DH()
+        key = dh_client.dhp_key_exchange_client(recv_send)
+        print("key from client: ", key)
+
+        recv_send_crypt = recvSend(client_socket, key)
+        find_room(recv_send_crypt,ice_candidates_lst,fingerprints_algorithm,fingerprint)
+
+        port_ip_ex = recv_send_crypt.recv_by_size()
+        port_ip_ex_lst = port_ip_ex.split(DELIMITER_BYTES)
+        print(port_ip_ex_lst)
+
+        print(port_ip_ex_lst[0])
+
+        type_msg = port_ip_ex_lst[0]
+        port_ip_ex_lst.remove(type_msg)
+
+        port1 = int.from_bytes(port_ip_ex_lst[0], byteorder="big")
+        port2 = int.from_bytes(port_ip_ex_lst[2], byteorder="big")
+        port3 = int.from_bytes(port_ip_ex_lst[4], byteorder="big")
+
+        ip1 = port_ip_ex_lst[1].decode()
+        ip2 = port_ip_ex_lst[3].decode()
+        ip3 = port_ip_ex_lst[5].decode()
+
+        other_fingerprint_algorithm = port_ip_ex_lst[6].decode()
+        other_fingerprint = port_ip_ex_lst[7]
+
+        print("port1: ",port1," port2: ",port2," port3: ",port3)
+        print("ip1: ",ip1," ip2: ",ip2," ip3: ",ip3)
+
+        lst_ice_other = [(ip1, port1), (ip2, port2), (ip3, port3)]
+        print(lst_ice_other)
+        print(ice_candidates_lst)
+
+        other_fingerprint = other_fingerprint
+        other_fingerprint_algorithm = other_fingerprint_algorithm
+
+        print("can start the ice framework")
+
+        return True
 
 
     def datagram_received(self, data, addr):
@@ -113,7 +198,7 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
             else:
                 addr_append = (TURN_IP, addr_allocate[1])
                 ice_candidates_lst.insert(2, addr_append)
-                print("add: ",addr_append)
+                print("addr: ",addr_append)
 
                 found_turn = True
 
@@ -167,12 +252,12 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
                 allocate_packet, transaction_id = build_allocate_msg(True)
                 print("allocate_packet: ",allocate_packet)
 
-                self.transport.sendto(allocate_packet, (TURN_IP, TURN_PORT))
+                self.transport.sendto(allocate_packet, (turn_ip, TURN_PORT))
                 transaction_dic["turn"].append(transaction_id)
 
             else:
                 print(msg_turn[0])
-                self.transport.sendto(msg_turn[0][0], (TURN_IP, TURN_PORT))
+                self.transport.sendto(msg_turn[0][0], (turn_ip, TURN_PORT))
                 transaction_dic["turn"].append(msg_turn[0][1])
 
             await asyncio.sleep(2)
@@ -191,7 +276,23 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
 
 
 
-async def run_ice():
+async def run_ice(var,fingerprints,fingerprint_algorithm):
+
+    global turn_ip
+    global signaling_server_ip
+    global fingerprint,fingerprints_algorithm
+
+    fingerprint = fingerprints
+    fingerprints_algorithm = fingerprint_algorithm
+
+    if var:
+        turn_ip = TURN_IP
+        signaling_server_ip = SIGNALING_SERVER_IP_MAIN_SERVER
+    else:
+        turn_ip = TURN_IP_CLIENT
+        signaling_server_ip = SIGNALING_SERVER_IP_MAIN_CLIENT
+
+
 
     global local_addr
     global local_ip
@@ -212,7 +313,3 @@ async def run_ice():
 
     finally:
         transport.close()
-
-
-if __name__ == "__main__":
-    asyncio.run(run_ice())

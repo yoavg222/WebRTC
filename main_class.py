@@ -1,19 +1,16 @@
 import asyncio
 import socket
-import threading
 import time
 import random
 import hashlib
 
-from stun_client import stun_request,keep_alive_udp_socket
-from tcp_by_size import recvSend
-from constant import SIGNALING_SERVER_IP_MAIN_SERVER,DH_START,DH_MSG,ROOM_REQUEST,DELIMITER,IP_PORT_EXT_MSG,SIGNALING_SERVER_PORT,SIGNALING_SERVER_IP_MAIN_CLIENT,CERTIFICATE_TYPE,CERT_VERIFY_TYPE
-from constant import HANDSHAKE_MSG_SERVER_HELLO,HANDSHAKE_MSG_CLIENT_HELLO,HANDSHAKE_MSG_ENCRYPTED_EXTENSIONS,HEADER_INFO_INT,HANDSHAKE_TYPE,ENCRYPTED_EXTENSIONS_TYPE,DELIMITER_BYTES,TURN_PORT,TURN_IP
-from constant import FINISHED_TYPE,TURN_IP_CLIENT,ALLOCATE_TYPE
-from DH_class import DH
+from stun_client import keep_alive_udp_socket
+from constant import SIGNALING_SERVER_IP_MAIN_SERVER,SIGNALING_SERVER_IP_MAIN_CLIENT,CERTIFICATE_TYPE,CERT_VERIFY_TYPE
+from constant import HANDSHAKE_MSG_SERVER_HELLO,HANDSHAKE_MSG_CLIENT_HELLO,HANDSHAKE_MSG_ENCRYPTED_EXTENSIONS,HEADER_INFO_INT,HANDSHAKE_TYPE,ENCRYPTED_EXTENSIONS_TYPE,DELIMITER_BYTES
+from constant import FINISHED_TYPE
 from hole_punching import connect_to_peer
-from dtls import (client_hello, client_hello_parsing, server_hello, server_hello_parsing, full_record_recv,
-    hmac_sha256, extract_signature_cert_verify, encrypted_extensions_type, server_encrypted_extensions,
+from dtls import (client_hello, client_hello_parsing, server_hello, server_hello_parsing,
+    hmac_sha256, extract_signature_cert_verify,server_encrypted_extensions,
     handshake_finish_parsing, certificate_parsing, remove_header,
     certificate_verify,handshake_finished)
 from dtls import message_splitting,add_header_to_server_encrypted_packets,unit_records,server_encrypted_extensions_parsing,certificate,select_signature_algorithms
@@ -22,8 +19,7 @@ from build_certificate import BuildCertificate
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
-from turn_msg import build_allocate_msg,parsing_allocate_error_response,build_second_allocate_request,parsing_allocate_msg
-from ice import main_ice
+from ice import run_ice
 
 
 
@@ -36,7 +32,6 @@ class Main:
             self.udp_socket_turn = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 
             self.ip,self.port,self.is_full_cone_nat = None,None,None
-            self.recv_send_crypt = None
             self.stop_keep_alive = False
             self.signaling_server_ip = var
 
@@ -44,8 +39,6 @@ class Main:
                 self.signaling_server_ip = SIGNALING_SERVER_IP_MAIN_SERVER
             else:
                 self.signaling_server_ip = SIGNALING_SERVER_IP_MAIN_CLIENT
-
-            self.recv_send, self.client_socket = self.create_client_socket_recv_send()
 
             self.certificate_object = BuildCertificate()
             self.fingerprints,self.fingerprint_algorithm = self.certificate_object.fingerprint()
@@ -112,10 +105,7 @@ class Main:
             else:
                 self.local_address = (ip_addr,6666)
 
-            if var:
-                self.turn_ip = TURN_IP
-            else:
-                self.turn_ip = TURN_IP_CLIENT
+            self.var = var
 
             self.udp_socket_local_addr = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
 
@@ -143,11 +133,6 @@ class Main:
             while not self.stop_keep_alive:
                 keep_alive_udp_socket(udp_socket)
                 time.sleep(20)
-
-
-
-        def refresh_msg(self):
-            pass
 
 
 
@@ -983,10 +968,6 @@ class Main:
             return need_to_decrypt_lst, seq_number_coming_epoch_1, seq_number_coming_epoch_0,True
 
 
-
-
-
-
         def dtls_handshake_client(self):
             self.disconnect = False
             time_out_seconds = 1.75
@@ -1132,34 +1113,8 @@ class Main:
             self.finished()
 
 
-
-        def find_room(self):
-
-            room_client = input("Enter the room you want to connect with: ")
-            room_request = ROOM_REQUEST +room_client
-            self.recv_send_crypt.send_with_size(room_request)
-
-            addr_to_send_lst = []
-            for addr in self.ice_candidates:
-                port_bytes = addr[1].to_bytes(2,byteorder = "big")
-                ip_bytes = addr[0].encode()
-
-                addr_to_send_lst.append((port_bytes,ip_bytes))
-
-            to_send_ip_port_ext = IP_PORT_EXT_MSG.encode() + DELIMITER_BYTES + addr_to_send_lst[0][0] + DELIMITER_BYTES + addr_to_send_lst[0][1] + DELIMITER_BYTES +addr_to_send_lst[1][0] + DELIMITER_BYTES + addr_to_send_lst[1][1] + DELIMITER_BYTES +addr_to_send_lst[2][0] + DELIMITER_BYTES + addr_to_send_lst[2][1] + DELIMITER_BYTES + self.fingerprint_algorithm.encode() + DELIMITER_BYTES + self.fingerprints
-            self.recv_send_crypt.send_with_size(to_send_ip_port_ext)
-
-
-        def create_client_socket_recv_send(self):
-            client_socket = socket.socket()
-            client_socket.connect((self.signaling_server_ip, SIGNALING_SERVER_PORT))
-            recv_send = recvSend(client_socket, None)
-
-            return recv_send,client_socket
-
-
         async def start_async_ice(self):
-            main_task = asyncio.create_task(main_ice())
+            main_task = asyncio.create_task(run_ice(self.var,self.fingerprints,self.fingerprint_algorithm))
             await main_task
 
 
@@ -1169,146 +1124,6 @@ class Main:
             print("---------------------------------")
 
             asyncio.run(self.start_async_ice())
-
-            # self.udp_socket_local_addr.bind(self.local_address)
-            # self.ice_candidates.insert(0,self.local_address,)
-            #
-            #
-            # self.ip,self.port,self.is_full_cone_nat = stun_request(self.udp_socket_hole_punching)
-            # print("ip : ", self.ip ," port : ",self.port," is_full_cone_nat :",self.is_full_cone_nat)
-            #
-            # if self.is_full_cone_nat:
-            #     self.ice_candidates.insert(1,(self.ip,self.port))
-            #
-            # allocate_packet,transaction_id = build_allocate_msg(True)
-            # self.udp_socket_turn.sendto(allocate_packet,(self.turn_ip,TURN_PORT))
-            # self.udp_socket_turn.settimeout(3.5)
-            #
-            # expected_reason_phrase = False
-            # nonce_server = None
-            # addr = None
-            # counter = 0
-            # while True:
-            #
-            #     if counter >= 3:
-            #         break
-            #
-            #     try:
-            #         packet,addr = self.udp_socket_turn.recvfrom(1024)
-            #
-            #         if not packet:
-            #             break
-            #
-            #         else:
-            #             realm_server,nonce_server,expected_reason_phrase,transaction_id_server = parsing_allocate_error_response(packet,transaction_id)
-            #
-            #             if expected_reason_phrase and transaction_id == transaction_id_server:
-            #                 break
-            #
-            #
-            #     except TimeoutError:
-            #         counter += 1
-            #         allocate_packet, transaction_id = build_allocate_msg(True)
-            #         self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
-            #
-            #
-            #
-            # continue_turn = False
-            # if expected_reason_phrase:
-            #     continue_turn = True
-            # else:
-            #     print("false continue_turn")
-            #     pass
-            #
-            # counter = 0
-            # if continue_turn:
-            #     allocate_packet,transaction_id = build_second_allocate_request(nonce_server)
-            #     self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
-            #
-            #     while True:
-            #         if counter >= 3:
-            #             break
-            #
-            #         try:
-            #             packet, addr = self.udp_socket_turn.recvfrom(1024)
-            #             if not packet:
-            #                 break
-            #
-            #             else:
-            #                 packet_type = packet[:2]
-            #                 if packet_type == ALLOCATE_TYPE:
-            #                     transaction_id,lifetime,good_protocol,username,realm,nonce,message_integrity,addr = parsing_allocate_msg(packet)
-            #
-            #                     if addr is not None:
-            #                         break
-            #
-            #         except TimeoutError:
-            #             counter += 1
-            #             allocate_packet, transaction_id = build_second_allocate_request(nonce_server)
-            #             self.udp_socket_turn.sendto(allocate_packet, (self.turn_ip, TURN_PORT))
-            #
-            #
-            #
-            #
-            # addr_append = (TURN_IP,addr[1])
-            # self.ice_candidates.insert(2,addr_append)
-            # print("addr: ",addr_append)
-            #
-            # t = threading.Thread(target=self.keep_alive,args = (self.udp_socket_hole_punching,))
-            # t.start()
-            #
-            # self.recv_send.send_with_size(DH_START)
-            # from_server = self.recv_send.recv_by_size().decode()
-            #
-            # if from_server != DH_MSG:
-            #     print("Error in from_server")
-            #
-            # dh_client = DH()
-            # key = dh_client.dhp_key_exchange_client(self.recv_send)
-            # print("key from client: ",key)
-            #
-            # self.recv_send_crypt = recvSend(self.client_socket,key)
-            # self.find_room()
-            #
-            # port_ip_ex = self.recv_send_crypt.recv_by_size()
-            #
-            # port_ip_ex_lst = port_ip_ex.split(DELIMITER_BYTES)
-            # print(port_ip_ex_lst)
-            #
-            # type_msg = port_ip_ex_lst[0]
-            # port_ip_ex_lst.remove(type_msg)
-            #
-            # port1 = int.from_bytes(port_ip_ex_lst[0], byteorder="big")
-            # port2 = int.from_bytes(port_ip_ex_lst[2], byteorder="big")
-            # port3 = int.from_bytes(port_ip_ex_lst[4], byteorder="big")
-            #
-            # ip1 = port_ip_ex_lst[1].decode()
-            # ip2 = port_ip_ex_lst[3].decode()
-            # ip3 = port_ip_ex_lst[5].decode()
-            #
-            # fingerprint_algorithm = port_ip_ex_lst[6].decode()
-            # fingerprint= port_ip_ex_lst[7]
-            #
-            #
-            # print("port1: ",port1," port2: ",port2," port3: ",port3)
-            # print("ip1: ",ip1," ip2: ",ip2," ip3: ",ip3)
-            # print("fingerprint_algorithm: ",fingerprint_algorithm," fingerprint: ",fingerprint)
-            #
-            #
-            # lst_ice_other = [(ip1,port1),(ip2,port2),(ip3,port3)]
-            # print(lst_ice_other)
-            # print(self.ice_candidates)
-            #
-            #
-            # self.other_fingerprints = fingerprint
-            # self.other_sha_algorithm = fingerprint_algorithm
-            #
-            # asyncio.run(self.async_ice(lst_ice_other))
-            #
-            #
-            #
-            #
-            # self.hole_punching_func()
 
             if self.signaling_server_ip == SIGNALING_SERVER_IP_MAIN_SERVER:
                 self.dtls_handshake_server()
