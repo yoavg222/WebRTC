@@ -2,7 +2,7 @@ import asyncio
 import socket
 
 from constant import IP_ADDRESS_ALLOWLISTING, SERVER_A, DH_MSG ,SERVER_B, TURN_IP,TURN_IP_CLIENT,DH_START,TURN_PORT,SIGNALING_SERVER_IP_MAIN_SERVER,SIGNALING_SERVER_IP_MAIN_CLIENT,SIGNALING_SERVER_PORT
-from stun_client import stun_request, stun_response_parsing
+from stun_client import stun_request, stun_response_parsing,binding_response_parsing,parsing_binding_request_build_request_response
 from turn_msg import build_allocate_msg, build_second_allocate_request,parsing_allocate_msg
 from tcp_by_size import recvSend
 from DH_class import DH
@@ -24,21 +24,29 @@ found_ext = False
 found_turn = False
 
 
+get_host = False
+get_hole_punching = False
+get_turn_ext = False
+get_turn = False
+
+is_control = None
+
+finish = False
 turn_ip = None
 signaling_server_ip = None
 fingerprints_algorithm = None
 fingerprint = None
 other_fingerprint_algorithm = None
 other_fingerprint = None
+pairs = []
 
 transaction_dic = {"a": [], "b": [], "turn": []}
 
 msg_stun = []
 msg_turn = []
 lst_ice_other = []
-
-
-
+ice_candidates = []
+priority_success = []
 
 
 
@@ -66,19 +74,80 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         print("here in asyncio.create_task")
 
 
+
+
+    def datagram_received(self, data, addr):
+        print("datagram_received")
+
+        if not finish_ice_candidates:
+            asyncio.create_task(self.collect_ice_candidates_recv(data))
+
+        else:
+            asyncio.create_task(self.ice_framework_recv(data,addr))
+
+
     async def help_function(self):
         await asyncio.create_task(self.collect_ice_candidates_send())
         signaling_server_connection_good = self.signaling_server_connection()
 
         if signaling_server_connection_good:
-            pass
+
+            await asyncio.create_task(self.ice_framework_send())
+            await asyncio.create_task(self.timer_ice_frame_work())
+
+
+    async def timer_ice_frame_work(self):
+
+        global finish
+
+        await asyncio.sleep(8)
+        finish = True
 
 
 
+    async def ice_framework_send(self):
 
-    async def ice_frame_work(self):
-        pass
+        global get_host
+        global get_hole_punching
+        global get_turn_ext
+        global get_turn
 
+        selected_addr = None
+        need_await = False
+
+        while not finish:
+            i = 0
+            for ice_candidate in pairs:
+
+                if ice_candidate["is_success"]:
+                    print("success")
+
+
+                request,transaction_id = stun_request(False)
+                ice_candidate["current_transaction_id"].append(transaction_id)
+                self.transport.sendto(request,ice_candidate["remote"])
+
+                await asyncio.sleep(0.02)
+
+
+    async def ice_framework_recv(self,data,addr):
+
+        global priority_success
+
+        is_good,transaction_id = binding_response_parsing(data)
+        print("transaction_id: ",transaction_id)
+
+        if is_good:
+            for ice_candidate in pairs:
+                if transaction_id in ice_candidate["current_transaction_id"]:
+                    ice_candidate["is_success"] = True
+                    priority_success.append(ice_candidate)
+                    break
+
+        else:
+            print("here")
+            response = parsing_binding_request_build_request_response(data)
+            self.transport.sendto(response,addr)
 
 
     def signaling_server_connection(self):
@@ -86,7 +155,8 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         global other_fingerprint_algorithm
         global other_fingerprint
         global lst_ice_other
-
+        global ice_candidates
+        global pairs
 
         recv_send,client_socket = create_client_socket_recv_send(signaling_server_ip)
 
@@ -131,6 +201,21 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         print(lst_ice_other)
         print(ice_candidates_lst)
 
+
+        priority = 0
+        for candidate in ice_candidates_lst:
+            for other_candidate in lst_ice_other:
+                pairs.append({
+                    "local":candidate,
+                    "remote":other_candidate,
+                    "current_transaction_id":[],
+                    "priority":priority,
+                    "is_success":False
+                })
+
+                priority += 1
+
+        pairs.sort(key=lambda item: item["priority"], reverse=True)
         other_fingerprint = other_fingerprint
         other_fingerprint_algorithm = other_fingerprint_algorithm
 
@@ -139,11 +224,6 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         return True
 
 
-    def datagram_received(self, data, addr):
-        print("datagram_received")
-
-        if not finish_ice_candidates:
-            asyncio.create_task(self.collect_ice_candidates_recv(data))
 
 
 
@@ -231,7 +311,7 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
 
 
             if not found_ext:
-                header, header_b, transaction_id, transaction_id_b = stun_request()
+                header, header_b, transaction_id, transaction_id_b = stun_request(True)
 
                 transaction_dic["a"].append(transaction_id)
                 transaction_dic["b"].append(transaction_id_b)
@@ -263,24 +343,13 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
             await asyncio.sleep(2)
 
 
-    async def ice_framework_send(self):
-        pass
-
-
-    async def ice_framework_recv(self):
-        pass
-
-
-    def signaling_server(self):
-        pass
-
-
 
 async def run_ice(var,fingerprints,fingerprint_algorithm):
 
     global turn_ip
     global signaling_server_ip
     global fingerprint,fingerprints_algorithm
+    global is_control
 
     fingerprint = fingerprints
     fingerprints_algorithm = fingerprint_algorithm
@@ -288,10 +357,12 @@ async def run_ice(var,fingerprints,fingerprint_algorithm):
     if var:
         turn_ip = TURN_IP
         signaling_server_ip = SIGNALING_SERVER_IP_MAIN_SERVER
+        is_control = var
+
     else:
         turn_ip = TURN_IP_CLIENT
         signaling_server_ip = SIGNALING_SERVER_IP_MAIN_CLIENT
-
+        is_control = var
 
 
     global local_addr

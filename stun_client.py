@@ -16,7 +16,7 @@ def generate_transaction_id():
 
 
 
-def stun_request():
+def stun_request(var):
     global transaction_id
 
     transaction_id = generate_transaction_id()
@@ -25,11 +25,37 @@ def stun_request():
     transaction_id_b = generate_transaction_id()
     header_b = struct.pack("!HHI12s", STUN_METHOD["STUN_METHOD_BINDING"], STUN_MSG_LENGTH, STUN_MAGIC_COOKIE,transaction_id_b)
 
-    return header,header_b,transaction_id,transaction_id_b
+    if var:
+
+        return header,header_b,transaction_id,transaction_id_b
+
+    else:
+        return header,transaction_id
 
 
 
 
+
+def binding_response_parsing(packet):
+
+
+    msg_type = packet[:2]
+    transaction_id_check = packet[2:]
+
+    if msg_type != b"\x01\x01":
+        return False,transaction_id_check
+
+
+    return True,transaction_id_check
+
+
+
+def parsing_binding_request_build_request_response(packet):
+    transaction_id_check = packet[8:20]
+
+
+    response = b"\x01\x01" + transaction_id_check
+    return response
 
 
 def stun_response_parsing(data_a,transaction_id_a,data_b,transaction_id_b):
@@ -38,7 +64,6 @@ def stun_response_parsing(data_a,transaction_id_a,data_b,transaction_id_b):
     transaction_id_check = data_a[8:20]
     port_external_a = data_a[26:28]
     ip_external_a = data_a[28:32]
-
 
 
     port_external_a = struct.unpack(">H",port_external_a)[0] ^ MAGIC_COOKIE_MOST_SIGNIFICANT
