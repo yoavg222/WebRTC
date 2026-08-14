@@ -96,6 +96,8 @@ class Main:
             }
             self.disconnect = False
             self.ice_candidates = []
+            self.is_control = None
+
 
             hostname = socket.gethostname()
             ip_addr = socket.gethostbyname(hostname)
@@ -1115,7 +1117,17 @@ class Main:
 
         async def start_async_ice(self):
             main_task = asyncio.create_task(run_ice(self.var,self.fingerprints,self.fingerprint_algorithm))
-            await main_task
+            addr,sock,control,self.other_sha_algorithm,self.other_fingerprints = await main_task
+
+            if not addr and not sock:
+                return False
+
+            self.other_ip = addr[0]
+            self.other_port = addr[1]
+            self.udp_socket = sock
+            self.is_control = control
+
+            return True
 
 
 
@@ -1123,11 +1135,12 @@ class Main:
         def main(self):
             print("---------------------------------")
 
-            asyncio.run(self.start_async_ice())
+            result = asyncio.run(self.start_async_ice())
 
-            if self.signaling_server_ip == SIGNALING_SERVER_IP_MAIN_SERVER:
-                self.dtls_handshake_server()
-            else:
-                self.dtls_handshake_client()
+            if result:
+                if self.is_control:
+                    self.dtls_handshake_server()
+                else:
+                    self.dtls_handshake_client()
 
 

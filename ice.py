@@ -2,7 +2,7 @@ import asyncio
 import socket
 
 from constant import IP_ADDRESS_ALLOWLISTING, SERVER_A, DH_MSG ,SERVER_B, TURN_IP,TURN_IP_CLIENT,DH_START,TURN_PORT,SIGNALING_SERVER_IP_MAIN_SERVER,SIGNALING_SERVER_IP_MAIN_CLIENT,SIGNALING_SERVER_PORT
-from stun_client import stun_request, stun_response_parsing,binding_response_parsing,parsing_binding_request_build_request_response
+from stun_client import stun_request,build_use_candidate,stun_response_parsing,binding_response_parsing,parsing_binding_request_build_request_response
 from turn_msg import build_allocate_msg, build_second_allocate_request,parsing_allocate_msg
 from tcp_by_size import recvSend
 from DH_class import DH
@@ -18,19 +18,15 @@ local_ip = None
 ice_candidates_lst = []
 finish_ice_candidates = False
 nonce_server = None
-
+selected_addr = None
 found_local = False
 found_ext = False
 found_turn = False
-
-
 get_host = False
 get_hole_punching = False
 get_turn_ext = False
 get_turn = False
-
 is_control = None
-
 finish = False
 turn_ip = None
 signaling_server_ip = None
@@ -39,16 +35,14 @@ fingerprint = None
 other_fingerprint_algorithm = None
 other_fingerprint = None
 pairs = []
-
 transaction_dic = {"a": [], "b": [], "turn": []}
-
 msg_stun = []
 msg_turn = []
 lst_ice_other = []
 ice_candidates = []
 priority_success = []
-
-
+transaction_id_lst = []
+future = None
 
 class EchoUDPProtocol(asyncio.DatagramProtocol):
 
@@ -87,13 +81,29 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
 
 
     async def help_function(self):
+
+        global selected_addr
+        global future
+
+
         await asyncio.create_task(self.collect_ice_candidates_send())
         signaling_server_connection_good = self.signaling_server_connection()
 
         if signaling_server_connection_good:
 
-            await asyncio.create_task(self.ice_framework_send())
-            await asyncio.create_task(self.timer_ice_frame_work())
+            task1 = asyncio.create_task(self.ice_framework_send())
+            task2 =  asyncio.create_task(self.timer_ice_frame_work())
+
+            await task1
+            await task2
+
+            print("selected_addr: ",selected_addr)
+
+            if future is not None:
+                future.set_result((selected_addr,self.transport,other_fingerprint_algorithm,other_fingerprint))
+
+
+
 
 
     async def timer_ice_frame_work(self):
@@ -111,16 +121,45 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         global get_hole_punching
         global get_turn_ext
         global get_turn
+        global selected_addr
 
-        selected_addr = None
+
         need_await = False
+        current_priority = None
+        need_break = False
 
-        while not finish:
-            i = 0
+        while True:
+
+            if need_break:
+                break
+
+            if need_await:
+                await asyncio.sleep(0.5)
+
             for ice_candidate in pairs:
 
                 if ice_candidate["is_success"]:
                     print("success")
+                    if ice_candidate["priority"] > 0:
+                        if current_priority is not None:
+                            if ice_candidate["priority"] > current_priority:
+                                need_break = True
+                                break
+
+                            else:
+                                current_priority = ice_candidate["priority"]
+                                selected_addr = ice_candidate["remote"]
+
+                        else:
+                            selected_addr = ice_candidate["remote"]
+                            current_priority = ice_candidate["priority"]
+                            need_await = True
+                            break
+
+                    else:
+                        selected_addr = ice_candidate["remote"]
+                        need_break = True
+                        break
 
 
                 request,transaction_id = stun_request(False)
@@ -129,25 +168,46 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
 
                 await asyncio.sleep(0.02)
 
+        if is_control:
+            while not finish:
+                packet,transaction_id = build_use_candidate()
+                self.transport.sendto(packet,selected_addr)
+                transaction_id_lst.append(transaction_id)
+
+                await asyncio.sleep(0.03)
+
+
+
 
     async def ice_framework_recv(self,data,addr):
 
         global priority_success
+        global finish
+        global selected_addr
 
         is_good,transaction_id = binding_response_parsing(data)
         print("transaction_id: ",transaction_id)
 
         if is_good:
+            if transaction_id in transaction_id_lst:
+                finish = True
+                selected_addr = addr
+
+
             for ice_candidate in pairs:
                 if transaction_id in ice_candidate["current_transaction_id"]:
                     ice_candidate["is_success"] = True
                     priority_success.append(ice_candidate)
                     break
 
-        else:
-            print("here")
+        elif not is_good:
             response = parsing_binding_request_build_request_response(data)
             self.transport.sendto(response,addr)
+
+        else:
+            response = parsing_binding_request_build_request_response(data)
+            self.transport.sendto(response,addr)
+            selected_addr = addr
 
 
     def signaling_server_connection(self):
@@ -215,7 +275,7 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
 
                 priority += 1
 
-        pairs.sort(key=lambda item: item["priority"], reverse=True)
+        pairs.sort(key=lambda item: item["priority"])
         other_fingerprint = other_fingerprint
         other_fingerprint_algorithm = other_fingerprint_algorithm
 
@@ -350,6 +410,10 @@ async def run_ice(var,fingerprints,fingerprint_algorithm):
     global signaling_server_ip
     global fingerprint,fingerprints_algorithm
     global is_control
+    global local_addr
+    global local_ip
+    global ice_candidates_lst
+    global future
 
     fingerprint = fingerprints
     fingerprints_algorithm = fingerprint_algorithm
@@ -359,15 +423,14 @@ async def run_ice(var,fingerprints,fingerprint_algorithm):
         signaling_server_ip = SIGNALING_SERVER_IP_MAIN_SERVER
         is_control = var
 
+
     else:
         turn_ip = TURN_IP_CLIENT
         signaling_server_ip = SIGNALING_SERVER_IP_MAIN_CLIENT
         is_control = var
 
 
-    global local_addr
-    global local_ip
-    global ice_candidates_lst
+
 
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
@@ -375,12 +438,24 @@ async def run_ice(var,fingerprints,fingerprint_algorithm):
     print("local_ip: ", local_ip)
 
     loop = asyncio.get_running_loop()
+    future = loop.create_future()
     transport, _ = await loop.create_datagram_endpoint(
         lambda: EchoUDPProtocol(), local_addr=(IP_ADDRESS_ALLOWLISTING, 0)
     )
 
     try:
-        await asyncio.Future()
+        result = await future
 
-    finally:
-        transport.close()
+        addr = result[0]
+        new_sock = result[1]
+        other_algorithm = result[2]
+        fingerprint = result[3]
+
+        new_sock = new_sock.get_extra_info("socket")
+        new_sock = new_sock._sock
+
+        return addr,new_sock,is_control,other_algorithm,fingerprint
+
+
+    except:
+        return False,False

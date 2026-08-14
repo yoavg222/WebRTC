@@ -34,6 +34,12 @@ def stun_request(var):
 
 
 
+def build_use_candidate():
+    transaction_id_here = generate_transaction_id()
+
+    packet = b"\x00\x25" + transaction_id_here
+    return packet,transaction_id_here
+
 
 
 def binding_response_parsing(packet):
@@ -42,12 +48,14 @@ def binding_response_parsing(packet):
     msg_type = packet[:2]
     transaction_id_check = packet[2:]
 
-    if msg_type != b"\x01\x01":
+    if msg_type != b"\x01\x01" and msg_type != b"\x00\x25":
         return False,transaction_id_check
 
-
-    return True,transaction_id_check
-
+    else:
+        if msg_type == b"\x01\x01":
+            return True,transaction_id_check
+        else:
+            return None,True
 
 
 def parsing_binding_request_build_request_response(packet):
