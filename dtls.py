@@ -531,10 +531,6 @@ def server_encrypted_extensions_parsing(packet):
         return None
 
 
-    length_data = packet[1:4]
-    length_data_int = int.from_bytes(length_data,byteorder="big")
-
-    handshake_header = packet[4:12]
     fragment_length = packet[5:8]
     fragment_length_int = int.from_bytes(fragment_length,byteorder="big")
 
@@ -573,7 +569,6 @@ def add_header_to_server_encrypted_packets(packet,header_info_input,record_numbe
     record_length = len(packet)
     record_length_bytes = record_length.to_bytes(2,byteorder="big")
 
-    # header_info_bytes = header_info.to_bytes(1,byteorder="big")
     record_number_bytes = record_number.to_bytes(2,byteorder="big")
 
     return header_info_input + record_number_bytes + record_length_bytes + packet
@@ -691,16 +686,6 @@ def certificate_parsing(packet):
     print("the_certificate in certificate_parsing: ",the_certificate.hex())
 
     return the_certificate
-
-
-
-#need to finish here the else logic
-# def check_if_full_packet(packet_lst):
-#
-#     if len(packet_lst) == 1:
-#         return True,None
-#     else:
-#         return False,packet_lst
 
 
 def remove_header(packet):
@@ -838,11 +823,6 @@ def handshake_finished(verify_data,seq_num):
         handshake_finished_packet = handshake_finished_packet + verify_data + handshake_type
 
         return [handshake_finished_packet],seq_num + 1,seq_num + 1
-
-
-
-
-
 
 
 

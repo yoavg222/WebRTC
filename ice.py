@@ -43,6 +43,7 @@ ice_candidates = []
 priority_success = []
 transaction_id_lst = []
 future = None
+var_input = None
 
 class EchoUDPProtocol(asyncio.DatagramProtocol):
 
@@ -115,6 +116,11 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
 
 
 
+    async def handle_channel_bind_turn(self):
+        pass
+
+
+
     async def ice_framework_send(self):
 
         global get_host
@@ -122,7 +128,7 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         global get_turn_ext
         global get_turn
         global selected_addr
-
+        global var_input
 
         need_await = False
         current_priority = None
@@ -131,6 +137,16 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         while True:
 
             if need_break:
+                ip_select = selected_addr[0]
+                if var_input:
+                    if ip_select == TURN_IP:
+                        await asyncio.create_task(self.handle_channel_bind_turn())
+
+                elif not var_input:
+                    if ip_select == TURN_IP_CLIENT:
+                        await asyncio.create_task(self.handle_channel_bind_turn())
+
+
                 break
 
             if need_await:
@@ -165,6 +181,8 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
                 request,transaction_id = stun_request(False)
                 ice_candidate["current_transaction_id"].append(transaction_id)
                 self.transport.sendto(request,ice_candidate["remote"])
+                print("send: ",request.hex())
+
 
                 await asyncio.sleep(0.02)
 
@@ -172,6 +190,9 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
             while not finish:
                 packet,transaction_id = build_use_candidate()
                 self.transport.sendto(packet,selected_addr)
+                print("send: ",packet.hex())
+
+
                 transaction_id_lst.append(transaction_id)
 
                 await asyncio.sleep(0.03)
@@ -186,12 +207,13 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         global selected_addr
 
         is_good,transaction_id = binding_response_parsing(data)
-        print("transaction_id: ",transaction_id)
+        print("recv: ",data.hex()," from: ",addr)
 
         if is_good:
             if transaction_id in transaction_id_lst:
                 finish = True
                 selected_addr = addr
+                print("selected_addr: ",selected_addr)
 
 
             for ice_candidate in pairs:
@@ -414,6 +436,9 @@ async def run_ice(var,fingerprints,fingerprint_algorithm):
     global local_ip
     global ice_candidates_lst
     global future
+    global var_input
+
+    var_input = var
 
     fingerprint = fingerprints
     fingerprints_algorithm = fingerprint_algorithm
