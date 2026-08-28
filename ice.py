@@ -3,7 +3,7 @@ import socket
 
 from constant import IP_ADDRESS_ALLOWLISTING, SERVER_A, DH_MSG ,SERVER_B, TURN_IP,TURN_IP_CLIENT,DH_START,TURN_PORT,SIGNALING_SERVER_IP_MAIN_SERVER,SIGNALING_SERVER_IP_MAIN_CLIENT,SIGNALING_SERVER_PORT
 from stun_client import stun_request,build_use_candidate,stun_response_parsing,binding_response_parsing,parsing_binding_request_build_request_response
-from turn_msg import build_allocate_msg, build_second_allocate_request,parsing_allocate_msg
+from turn_msg import build_allocate_msg, build_second_allocate_request,parsing_msg,build_channel_bind_request
 from tcp_by_size import recvSend
 from DH_class import DH
 from signaling_func import create_client_socket_recv_send,find_room
@@ -44,6 +44,7 @@ priority_success = []
 transaction_id_lst = []
 future = None
 var_input = None
+channel_number = None
 
 class EchoUDPProtocol(asyncio.DatagramProtocol):
 
@@ -101,7 +102,7 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
             print("selected_addr: ",selected_addr)
 
             if future is not None:
-                future.set_result((selected_addr,self.transport,other_fingerprint_algorithm,other_fingerprint))
+                future.set_result((selected_addr,self.transport,other_fingerprint_algorithm,other_fingerprint,channel_number))
 
 
 
@@ -116,8 +117,12 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
 
 
 
-    async def handle_channel_bind_turn(self):
-        pass
+    def handle_channel_bind_turn(self):
+
+        channel_bind_request = build_channel_bind_request(selected_addr,var_input)
+        self.transport.sendto(channel_bind_request,(turn_ip,TURN_PORT))
+
+
 
 
 
@@ -140,11 +145,11 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
                 ip_select = selected_addr[0]
                 if var_input:
                     if ip_select == TURN_IP:
-                        await asyncio.create_task(self.handle_channel_bind_turn())
+                        self.handle_channel_bind_turn()
 
                 elif not var_input:
                     if ip_select == TURN_IP_CLIENT:
-                        await asyncio.create_task(self.handle_channel_bind_turn())
+                        self.handle_channel_bind_turn()
 
 
                 break
@@ -351,12 +356,11 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
                     print("symmetrical nat")
 
         else:
-            transaction_id, lifetime, good_protocol, has_username, realm, nonce, message_integrity_client, addr_allocate, expected_reason_phrase, is_error_response = parsing_allocate_msg(
-                data)
+            transaction_id, lifetime, good_protocol, has_username, realm, nonce, message_integrity_client, addr_allocate, expected_reason_phrase, is_error_response,channel_number_here = parsing_msg(data)
 
             if is_error_response:
                 get_error_response = True
-                msg_turn.append((build_second_allocate_request(nonce)))
+                msg_turn.append((build_second_allocate_request(nonce,var_input)))
             else:
                 addr_append = (TURN_IP, addr_allocate[1])
                 ice_candidates_lst.insert(2, addr_append)
@@ -479,7 +483,8 @@ async def run_ice(var,fingerprints,fingerprint_algorithm):
         new_sock = new_sock.get_extra_info("socket")
         new_sock = new_sock._sock
 
-        return addr,new_sock,is_control,other_algorithm,fingerprint
+
+        return addr,new_sock,is_control,other_algorithm,fingerprint,channel_number
 
 
     except:

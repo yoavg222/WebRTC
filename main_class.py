@@ -97,6 +97,7 @@ class Main:
             self.disconnect = False
             self.ice_candidates = []
             self.is_control = None
+            self.channel_number = False
 
 
             hostname = socket.gethostname()
@@ -1117,7 +1118,7 @@ class Main:
 
         async def start_async_ice(self):
             main_task = asyncio.create_task(run_ice(self.var,self.fingerprints,self.fingerprint_algorithm))
-            addr,sock,control,self.other_sha_algorithm,self.other_fingerprints = await main_task
+            addr,sock,control,self.other_sha_algorithm,self.other_fingerprints,self.channel_number = await main_task
 
             if not addr and not sock:
                 return False

@@ -1,8 +1,8 @@
 import asyncio
 import time
 
-from constant import TURN_PORT,IP_ADDRESS_ALLOWLISTING,REALM
-from turn_msg import parsing_allocate_msg,build_allocate_response_error,hmac_sha1,build_allocate_request_success
+from constant import TURN_PORT,IP_ADDRESS_ALLOWLISTING,REALM,ALLOCATE_REQUEST_TYPE,ERROR_RESPONSE_TYPE
+from turn_msg import parsing_msg,build_allocate_response_error,hmac_sha1,build_allocate_request_success
 from sqlalchemy import Table,Column,MetaData,String
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import select
@@ -12,8 +12,6 @@ dic_to_refresh = {}
 dic_nonce = {}
 dic_long_term_credentials = {}
 
-allocate_request_type = b"\x00\x03"
-error_response_type = b"\x00\x09"
 
 
 meta = MetaData()
@@ -70,7 +68,7 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
         print("get allocate request from: ",addr)
 
 
-        transaction_id, lifetime, good_protocol, has_username, realm, nonce, message_integrity_client, addr_allocate, expected_reason_phrase, is_error_response = parsing_allocate_msg(data)
+        transaction_id, lifetime, good_protocol, has_username, realm, nonce, message_integrity_client, addr_allocate, expected_reason_phrase, is_error_response,channel_number = parsing_msg(data)
         print("transaction_id: ",transaction_id," lifetime: ",lifetime," good_protocol: ",good_protocol)
 
 
@@ -172,6 +170,13 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
 
 
 
+    async def handle_bind_request(self,data,addr):
+
+
+        transaction_id, lifetime, good_protocol, has_username, realm, nonce, message_integrity_client, addr_allocate, expected_reason_phrase, is_error_response,channel_number = parsing_msg(data)
+
+
+
 
 
     async def handle_msgs(self,data,addr):
@@ -182,8 +187,12 @@ class EchoUDPProtocol(asyncio.DatagramProtocol):
 
             request_type = data[0:2]
 
-            if request_type == allocate_request_type:
+            if request_type == ALLOCATE_REQUEST_TYPE:
                 await self.handle_allocate_request(data, addr)
+
+            if request_type == ERROR_RESPONSE_TYPE:
+
+                await self.handle_bind_request(data,addr)
 
 
     async def clean_dic_to_refresh(self):
